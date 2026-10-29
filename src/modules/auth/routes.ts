@@ -10,11 +10,17 @@ import {
   forgotBody,
   loginBody,
   loginResponse,
+  oauthBody,
+  oauthParams,
+  refreshBody,
+  refreshResponse,
   registerBody,
   resendBody,
+  resetBody,
   tokenResponse,
   verifyBody,
 } from './schemas.js';
+import { z } from 'zod';
 
 export const authRoutes: FastifyPluginAsyncZod<{ deps: AppDeps; limiter: AttemptLimiter }> = async (
   app,
@@ -64,5 +70,35 @@ export const authRoutes: FastifyPluginAsyncZod<{ deps: AppDeps; limiter: Attempt
     '/password/forgot',
     { config: strict, schema: { tags, body: forgotBody, response: { 200: challengeResponse } } },
     async (req) => service.forgotPassword(req.body.email, req.ip),
+  );
+
+  app.post(
+    '/password/reset',
+    { config: strict, schema: { tags, body: resetBody, response: { 204: z.null() } } },
+    async (req, reply) => {
+      await service.resetPassword(req.body.challengeId, req.body.code, req.body.newPassword);
+      return reply.status(204).send(null);
+    },
+  );
+
+  app.post(
+    '/refresh',
+    { schema: { tags, body: refreshBody, response: { 200: refreshResponse } } },
+    async (req) => service.refresh(req.body.refreshToken),
+  );
+
+  app.post(
+    '/logout',
+    { preHandler: app.authenticate, schema: { tags, security: [{ bearerAuth: [] }], response: { 204: z.null() } } },
+    async (req, reply) => {
+      await service.logout(req.user.accessToken);
+      return reply.status(204).send(null);
+    },
+  );
+
+  app.post(
+    '/oauth/:provider',
+    { config: strict, schema: { tags, params: oauthParams, body: oauthBody, response: { 200: tokenResponse } } },
+    async (req) => service.oauth(req.params.provider, req.body.idToken, req.body.nonce),
   );
 };

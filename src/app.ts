@@ -9,6 +9,7 @@ import type { AuthProvider } from './integrations/auth-provider.js';
 import type { Notifier } from './integrations/notifier.js';
 import type { TokenVerifier } from './lib/token-verifier.js';
 import { errorHandler, notFoundHandler } from './lib/errors.js';
+import authGuard from './lib/auth-guard.js';
 import { genReqId, loggerOptions } from './lib/logger.js';
 import security from './plugins/security.js';
 import swagger from './plugins/swagger.js';
@@ -55,6 +56,7 @@ export async function buildApp(deps: AppDeps, opts: BuildOptions = {}): Promise<
   await app.register(security, { config, redis });
   if (config.docsEnabled) await app.register(swagger);
   await app.register(health, { db: deps.db });
+  await app.register(authGuard, { db: deps.db, tokens: deps.tokens });
   await app.register(authRoutes, { prefix: '/api/v1/auth', deps, limiter });
 
   return app;

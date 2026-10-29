@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import type { z } from 'zod';
 import type { AppDeps } from '../../app.js';
 import { profiles } from '../../db/schema.js';
@@ -113,6 +113,50 @@ export class AuthService {
 
   resendOtp(challengeId: string): Promise<ChallengeInfo> {
     return this.otp.resend(challengeId);
+  }
+
+  async refresh(refreshToken: string) {
+    const session = await this.deps.auth.refresh(refreshToken);
+    if (!session) throw new AppError('INVALID_REFRESH_TOKEN', 'Session expired. Please sign in again.');
+    return { accessToken: session.accessToken, refreshToken: session.refreshToken, expiresIn: session.expiresIn };
+  }
+
+  logout(accessToken: string): Promise<void> {
+    return this.deps.auth.revokeSession(accessToken);
+  }
+
+  async resetPassword(challengeId: string, code: string, newPassword: string): Promise<void> {
+    const { userId } = await this.otp.verify(challengeId, code, ['password_reset']);
+    // Decoy challenges (unknown email) have no user; answer exactly like a wrong code.
+    if (!userId) throw new AppError('OTP_INVALID', 'The code is incorrect', { attemptsRemaining: 0 });
+    await this.deps.auth.updateUser(userId, { password: newPassword });
+    // Revoke every refresh token for the account (all devices).
+    await this.deps.db.execute(sql`delete from auth.sessions where user_id = ${userId}`);
+  }
+
+  async oauth(provider: 'google' | 'microsoft', idToken: string, nonce?: string): Promise<TokenResponse> {
+    const { auth, db } = this.deps;
+    const result = await auth.signInWithIdToken(provider === 'microsoft' ? 'azure' : 'google', idToken, nonce);
+    const email = result.email.trim().toLowerCase();
+
+    const inserted = await db
+      .insert(profiles)
+      .values({ id: result.userId, email, fullName: result.fullName?.trim() || email.split('@')[0]!, status: 'active' })
+      .onConflictDoNothing()
+      .returning();
+    if (inserted[0]) return this.tokens(result, inserted[0], true);
+
+    const existing = await this.profileById(result.userId);
+    if (!existing) {
+      // Supabase created a separate user rather than linking to the email/password account.
+      await auth.revokeSession(result.accessToken);
+      throw new AppError('EMAIL_TAKEN', 'An account with this email already exists. Sign in with your password.');
+    }
+    if (existing.status === 'pending') {
+      const [activated] = await db.update(profiles).set({ status: 'active' }).where(eq(profiles.id, existing.id)).returning();
+      return this.tokens(result, activated ?? existing, true);
+    }
+    return this.tokens(result, existing, false);
   }
 
   /** Always succeeds with the same shape, so the endpoint cannot be used to discover accounts. */
