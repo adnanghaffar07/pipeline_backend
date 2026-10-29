@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
-import type { AppDeps } from '../../app.js';
+import type { AppDeps } from '../../create-app.js';
 import { listEnvelope } from '../../lib/pagination.js';
 import { InterestsService } from './service.js';
 

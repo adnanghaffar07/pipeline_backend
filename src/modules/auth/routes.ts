@@ -1,6 +1,6 @@
 import type { FastifyRequest } from 'fastify';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
-import type { AppDeps } from '../../app.js';
+import type { AppDeps } from '../../create-app.js';
 import type { AttemptLimiter } from '../../lib/attempt-limiter.js';
 import { AppError } from '../../lib/errors.js';
 import { OtpService } from './otp.js';

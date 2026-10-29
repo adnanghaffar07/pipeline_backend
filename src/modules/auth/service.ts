@@ -1,6 +1,6 @@
 import { eq, sql } from 'drizzle-orm';
 import type { z } from 'zod';
-import type { AppDeps } from '../../app.js';
+import type { AppDeps } from '../../create-app.js';
 import { profiles } from '../../db/schema.js';
 import type { AuthSession } from '../../integrations/auth-provider.js';
 import { AppError } from '../../lib/errors.js';

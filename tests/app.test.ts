@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
-import { buildApp, type AppDeps } from '../src/app.js';
+import { buildApp, type AppDeps } from '../src/create-app.js';
 import { AppError } from '../src/lib/errors.js';
 import type { Config } from '../src/config.js';
 import { createTestDb, type TestDb } from './helpers/test-db.js';

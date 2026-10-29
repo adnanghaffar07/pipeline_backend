@@ -67,7 +67,7 @@ production it refuses `NOTIFIER=console`.
 | `npm run dev` | Watch mode with `.env` |
 | `npm test` | Full test suite (in-process Postgres via PGlite; Supabase and Resend are faked) |
 | `npm run lint` / `npm run typecheck` | ESLint / TypeScript |
-| `npm run build` / `npm start` | Compile to `dist/` / run the compiled server |
+| `npm run build` / `npm start` | Compile to `dist/` / run the compiled server (`dist/index.js`) |
 | `npm run db:generate` | Generate a migration after editing `src/db/schema.ts` |
 | `npm run db:migrate:dev` / `npm run db:migrate` | Apply migrations (source / compiled) |
 
@@ -83,6 +83,22 @@ The container runs as a non-root user, exposes a health check on `/health/live`,
 `SIGTERM` (in-flight requests get up to 10 s). Behind a load balancer set `TRUST_PROXY` to the number of proxy
 hops (usually `1`) or the proxies' IP/CIDR list, so rate limits see real client IPs. `true` is rejected because
 it would let clients spoof their IP via `X-Forwarded-For`.
+
+## Vercel
+
+Vercel's Fastify preset uses `src/index.ts` (the first of `src/app`, `src/index`, `src/server` that exists) and runs
+the whole API as one function. Keep it that way: a file named `src/app.*` would be picked instead.
+
+Project → Settings → Environment Variables (Production): every variable from `.env.example`, plus:
+
+- `NODE_ENV=production`
+- `TRUST_PROXY=1` — Vercel's edge sets `X-Forwarded-For` to the real client IP.
+- `DATABASE_URL` — prefer Supabase's **transaction pooler** (port 6543) for serverless; URL-encode special characters in the password (`#` → `%23`).
+- `REDIS_URL` (e.g. Upstash) — function instances don't share memory, so rate limits are only per-instance without it.
+
+Run migrations from your machine (`npm run db:migrate:dev`), not from Vercel. After changing env vars, redeploy.
+If the app can't start (for example a missing variable), every route returns `500 FUNCTION_INVOCATION_FAILED`;
+the function's Runtime Logs list exactly which variables are missing or invalid.
 
 ## Manual smoke test (real Supabase + Resend)
 

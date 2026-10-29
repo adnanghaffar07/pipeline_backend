@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { buildApp } from '../../src/app.js';
+import { buildApp } from '../../src/create-app.js';
 import type { Config } from '../../src/config.js';
 import { createTokenVerifier } from '../../src/lib/token-verifier.js';
 import type { Db } from '../../src/db/client.js';
