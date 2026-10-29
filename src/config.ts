@@ -63,7 +63,7 @@ const envSchema = z
         (v) => {
           try {
             const u = new URL(v);
-            return u.hostname !== '' && u.username !== '';
+            return u.hostname !== '';
           } catch {
             return false;
           }
