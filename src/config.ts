@@ -86,7 +86,9 @@ const envSchema = z
   });
 
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
-  const parsed = envSchema.safeParse(env);
+  // `KEY=` in a .env file means "not set", so defaults apply.
+  const present = Object.fromEntries(Object.entries(env).filter(([, v]) => v !== undefined && v.trim() !== ''));
+  const parsed = envSchema.safeParse(present);
   if (!parsed.success) {
     const lines = parsed.error.issues.map((i) => `  ${i.path.join('.')}: ${i.message}`);
     throw new Error(`Invalid environment configuration:\n${lines.join('\n')}`);

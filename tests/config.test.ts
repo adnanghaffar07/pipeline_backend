@@ -23,6 +23,14 @@ describe('loadConfig', () => {
     expect(c.corsOrigins).toEqual(['https://a.com', 'https://b.com']);
   });
 
+  it('treats empty variables (as shipped in .env.example) as unset', () => {
+    const c = loadConfig({ ...base, DOCS_ENABLED: '', REDIS_URL: '', SUPABASE_JWT_SECRET: '', TRUST_PROXY: '', PORT: '' });
+    expect(c.docsEnabled).toBe(true);
+    expect(c.redisUrl).toBeUndefined();
+    expect(c.trustProxy).toBe(false);
+    expect(c.port).toBe(3000);
+  });
+
   it('parses boolean flags', () => {
     expect(loadConfig({ ...base, LOGIN_OTP_REQUIRED: 'false' }).loginOtpRequired).toBe(false);
   });
