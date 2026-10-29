@@ -2,11 +2,11 @@ import fp from 'fastify-plugin';
 import helmet from '@fastify/helmet';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
-import { Redis } from 'ioredis';
+import type { Redis } from 'ioredis';
 import type { Config } from '../config.js';
 import { AppError } from '../lib/errors.js';
 
-export default fp<{ config: Config }>(async (app, { config }) => {
+export default fp<{ config: Config; redis?: Redis }>(async (app, { config, redis }) => {
   // The API only serves JSON; the one HTML page (/docs) needs inline scripts, so CSP is off.
   await app.register(helmet, { contentSecurityPolicy: false, crossOriginResourcePolicy: { policy: 'cross-origin' } });
 
@@ -14,9 +14,6 @@ export default fp<{ config: Config }>(async (app, { config }) => {
     origin: config.corsOrigins.length > 0 ? config.corsOrigins : false,
     credentials: false,
   });
-
-  const redis = config.redisUrl ? new Redis(config.redisUrl, { connectTimeout: 2000, maxRetriesPerRequest: 1 }) : undefined;
-  if (redis) app.addHook('onClose', async () => void (await redis.quit()));
 
   await app.register(rateLimit, {
     global: true,

@@ -138,8 +138,16 @@ export class OtpService {
     return this.info(row);
   }
 
-  async verify(challengeId: string, code: string): Promise<{ userId: string | null; purpose: OtpPurpose }> {
-    await this.find(challengeId);
+  /** `allowed` is checked before anything else, so a code sent for one flow is never burned by another. */
+  async verify(
+    challengeId: string,
+    code: string,
+    allowed?: OtpPurpose[],
+  ): Promise<{ userId: string | null; purpose: OtpPurpose }> {
+    const found = await this.find(challengeId);
+    if (allowed && !allowed.includes(found.purpose)) {
+      throw new AppError('WRONG_CHALLENGE', 'This code cannot be used here');
+    }
     const now = this.now();
 
     // Decide inside a row lock; throw afterwards so a failed attempt's counter increment is committed.

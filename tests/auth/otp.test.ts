@@ -71,6 +71,15 @@ describe('OtpService', () => {
     expect(row?.consumedAt).not.toBeNull();
   });
 
+  it('rejects a disallowed purpose with WRONG_CHALLENGE without consuming it or counting an attempt', async () => {
+    const { challengeId } = await issue();
+    const code = notifier.lastCode(email);
+    expect(await errorCode(otp.verify(challengeId, code, ['password_reset']))).toBe('WRONG_CHALLENGE');
+    const [row] = await t.db.select().from(otpChallenges).where(eq(otpChallenges.id, challengeId));
+    expect(row).toMatchObject({ consumedAt: null, attempts: 0 });
+    expect(await otp.verify(challengeId, code, ['login'])).toMatchObject({ purpose: 'login' });
+  });
+
   it('second verify of a consumed challenge is OTP_ALREADY_USED', async () => {
     const { challengeId } = await issue();
     const code = notifier.lastCode(email);

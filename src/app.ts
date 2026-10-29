@@ -1,5 +1,7 @@
 import type { Writable } from 'node:stream';
 import Fastify, { type FastifyInstance } from 'fastify';
+import { Redis } from 'ioredis';
+import { MemoryAttemptLimiter, RedisAttemptLimiter } from './lib/attempt-limiter.js';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import type { Config } from './config.js';
 import type { Db } from './db/client.js';
@@ -11,6 +13,7 @@ import { genReqId, loggerOptions } from './lib/logger.js';
 import security from './plugins/security.js';
 import swagger from './plugins/swagger.js';
 import health from './plugins/health.js';
+import { authRoutes } from './modules/auth/routes.js';
 
 export interface AppDeps {
   config: Config;
@@ -45,9 +48,14 @@ export async function buildApp(deps: AppDeps, opts: BuildOptions = {}): Promise<
     reply.header('x-request-id', req.id);
   });
 
-  await app.register(security, { config });
+  const redis = config.redisUrl ? new Redis(config.redisUrl, { connectTimeout: 2000, maxRetriesPerRequest: 1 }) : undefined;
+  if (redis) app.addHook('onClose', async () => void (await redis.quit()));
+  const limiter = redis ? new RedisAttemptLimiter(redis) : new MemoryAttemptLimiter();
+
+  await app.register(security, { config, redis });
   if (config.docsEnabled) await app.register(swagger);
   await app.register(health, { db: deps.db });
+  await app.register(authRoutes, { prefix: '/api/v1/auth', deps, limiter });
 
   return app;
 }
