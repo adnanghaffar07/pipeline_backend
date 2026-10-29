@@ -1,12 +1,15 @@
 /**
  * Process entrypoint. Starts the server unconditionally, so it works both when run directly
- * (`node dist/index.js`, Docker) and when imported by a platform loader (Vercel's Fastify preset
- * picks the first of src/app, src/index, src/server and expects it to call listen()).
+ * (`node dist/index.js`, Docker) and when imported by Vercel's Fastify preset, which expects it to call listen().
+ *
+ * Vercel picks its entrypoint from src/{app,index,server}.* among files that reference fastify, so this must
+ * stay the only file with one of those names, and it must keep the fastify import below.
  */
-import { startServer } from './server.js';
+import type { FastifyInstance } from 'fastify';
+import { startServer } from './start-server.js';
 
 try {
-  const { app, stop } = await startServer();
+  const { app, stop }: { app: FastifyInstance; stop(): Promise<void> } = await startServer();
   for (const signal of ['SIGTERM', 'SIGINT'] as const) {
     process.once(signal, () => {
       app.log.info({ signal }, 'shutting down');

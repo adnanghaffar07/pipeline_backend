@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { startServer } from '../src/server.js';
+import { startServer } from '../src/start-server.js';
 import { createTokenVerifier } from '../src/lib/token-verifier.js';
 import { createTestDb } from './helpers/test-db.js';
 import { FakeAuthProvider, FakeNotifier } from './helpers/fakes.js';

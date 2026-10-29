@@ -86,8 +86,8 @@ it would let clients spoof their IP via `X-Forwarded-For`.
 
 ## Vercel
 
-Vercel's Fastify preset uses `src/index.ts` (the first of `src/app`, `src/index`, `src/server` that exists) and runs
-the whole API as one function. Keep it that way: a file named `src/app.*` would be picked instead.
+Vercel's Fastify preset uses `src/index.ts` as the entrypoint (it picks among `src/{app,index,server}.*` files that import `fastify`) and runs
+the whole API as one function. Keep `src/index.ts` the only file with one of those names; a test enforces this.
 
 Project → Settings → Environment Variables (Production): every variable from `.env.example`, plus:
 

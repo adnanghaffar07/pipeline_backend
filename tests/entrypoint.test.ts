@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
@@ -10,11 +10,17 @@ const VERCEL_ENTRY_ORDER = ['src/app', 'src/index', 'src/server', 'app', 'index'
 const EXTENSIONS = ['js', 'mjs', 'cjs', 'ts', 'cts', 'mts'];
 
 describe('deployment entrypoint', () => {
-  it('src/index.ts is the first file Vercel would pick', () => {
-    const first = VERCEL_ENTRY_ORDER.flatMap((base) => EXTENSIONS.map((ext) => `${base}.${ext}`)).find((f) =>
+  // Vercel picked src/app.js, then src/server.js, while src/index.ts existed: its detection also looks at
+  // whether a candidate references fastify. With exactly one candidate, its choice can't be wrong.
+  it('src/index.ts is the only file Vercel could pick as the entrypoint', () => {
+    const candidates = VERCEL_ENTRY_ORDER.flatMap((base) => EXTENSIONS.map((ext) => `${base}.${ext}`)).filter((f) =>
       existsSync(`${root}/${f}`),
     );
-    expect(first).toBe('src/index.ts');
+    expect(candidates).toEqual(['src/index.ts']);
+  });
+
+  it('src/index.ts imports fastify, so framework detection recognises it', () => {
+    expect(readFileSync(`${root}/src/index.ts`, 'utf8')).toMatch(/from 'fastify'/);
   });
 
   it('starts listening when imported as a module (how Vercel loads it), not only when run directly', async () => {
