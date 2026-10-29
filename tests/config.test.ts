@@ -31,6 +31,10 @@ describe('loadConfig', () => {
     expect(c.port).toBe(3000);
   });
 
+  it('rejects a DATABASE_URL that is not a complete URL (e.g. cut off at an unquoted #)', () => {
+    expect(() => loadConfig({ ...base, DATABASE_URL: 'postgresql://postgres.abc:.secret' })).toThrow(/DATABASE_URL/);
+  });
+
   it('parses boolean flags', () => {
     expect(loadConfig({ ...base, LOGIN_OTP_REQUIRED: 'false' }).loginOtpRequired).toBe(false);
   });

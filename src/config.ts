@@ -56,7 +56,21 @@ const envSchema = z
           .filter(Boolean)
           .join(',');
       }),
-    DATABASE_URL: z.string().regex(/^postgres(ql)?:\/\//, 'must be a postgres:// connection string'),
+    DATABASE_URL: z
+      .string()
+      .regex(/^postgres(ql)?:\/\//, 'must be a postgres:// connection string')
+      .refine(
+        (v) => {
+          try {
+            const u = new URL(v);
+            return u.hostname !== '' && u.username !== '';
+          } catch {
+            return false;
+          }
+        },
+        // Never echo the value: it contains the database password.
+        'is not a complete URL; if the password contains # or other special characters, wrap the value in double quotes or URL-encode them',
+      ),
     SUPABASE_URL: z.url().transform((u) => u.replace(/\/+$/, '')),
     SUPABASE_ANON_KEY: z.string().min(1),
     SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
