@@ -23,9 +23,13 @@ describe('deployment entrypoint', () => {
     expect(readFileSync(`${root}/src/index.ts`, 'utf8')).toMatch(/from 'fastify'/);
   });
 
-  it('starts listening when imported as a module (how Vercel loads it), not only when run directly', async () => {
+  // Vercel imports the entrypoint (it doesn't run it), and its Node runtime cannot require() ES modules:
+  // a dependency doing that crashed the deployed function, so run the same way and serve the docs too.
+  it('starts when imported the way Vercel loads it, without require(esm), docs included', async () => {
     const port = 39_000 + Math.floor(Math.random() * 1000);
-    const child = spawn(process.execPath, ['--import', 'tsx', '-e', "await import('./src/index.ts')"], {
+    // tsx/esm (not tsx) leaves require() unpatched, so an ESM-only transitive dependency fails here as on Vercel.
+    const nodeArgs = ['--no-experimental-require-module', '--import', 'tsx/esm', '-e', "await import('./src/index.ts')"];
+    const child = spawn(process.execPath, nodeArgs, {
       cwd: root,
       env: {
         PATH: process.env.PATH,
@@ -44,6 +48,7 @@ describe('deployment entrypoint', () => {
         RESEND_API_KEY: 're_test',
         EMAIL_FROM: 'Pipeline <no-reply@example.com>',
         TERMS_VERSION: 'test-terms',
+        DOCS_ENABLED: 'true',
       },
       stdio: ['ignore', 'ignore', 'pipe'],
     });
@@ -60,6 +65,12 @@ describe('deployment entrypoint', () => {
         if (child.exitCode !== null) break;
       }
       expect(status, stderr).toBe(200);
+      const docs = await fetch(`http://127.0.0.1:${port}/docs`);
+      expect(docs.status).toBe(200);
+      expect(docs.headers.get('content-type')).toMatch(/text\/html/);
+      expect(await docs.text()).toContain('/docs/json');
+      const spec = await fetch(`http://127.0.0.1:${port}/docs/json`);
+      expect(((await spec.json()) as { openapi: string }).openapi).toMatch(/^3\./);
     } finally {
       child.kill();
     }
