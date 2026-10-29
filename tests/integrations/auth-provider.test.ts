@@ -149,6 +149,15 @@ describe('SupabaseAuthProvider', () => {
     expect(await provider.refresh('nope')).toBeNull();
   });
 
+  it('refresh returns null for a malformed refresh token (live Supabase answers validation_failed)', async () => {
+    const { anon, provider } = stubs();
+    anon.auth.refreshSession.mockResolvedValue({
+      data: { session: null, user: null },
+      error: new AuthApiError('Refresh token is not valid', 400, 'validation_failed'),
+    });
+    expect(await provider.refresh('not-a-real-token')).toBeNull();
+  });
+
   it('signInWithIdToken passes provider and returns email and name', async () => {
     const { anon, provider } = stubs();
     anon.auth.signInWithIdToken.mockResolvedValue({

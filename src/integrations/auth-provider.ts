@@ -57,6 +57,8 @@ const REJECTION_CODES = new Set([
   'session_expired',
   'bad_jwt',
   'user_not_found',
+  // Live Supabase answers a malformed refresh token (or email) with 400 validation_failed.
+  'validation_failed',
 ]);
 
 function isRejection(err: AuthError): boolean {
