@@ -15,6 +15,8 @@ import security from './plugins/security.js';
 import swagger from './plugins/swagger.js';
 import health from './plugins/health.js';
 import { authRoutes } from './modules/auth/routes.js';
+import { meRoutes } from './modules/me/routes.js';
+import { interestsRoutes } from './modules/interests/routes.js';
 
 export interface AppDeps {
   config: Config;
@@ -58,6 +60,8 @@ export async function buildApp(deps: AppDeps, opts: BuildOptions = {}): Promise<
   await app.register(health, { db: deps.db });
   await app.register(authGuard, { db: deps.db, tokens: deps.tokens });
   await app.register(authRoutes, { prefix: '/api/v1/auth', deps, limiter });
+  await app.register(meRoutes, { prefix: '/api/v1/me', deps });
+  await app.register(interestsRoutes, { prefix: '/api/v1', deps });
 
   return app;
 }
