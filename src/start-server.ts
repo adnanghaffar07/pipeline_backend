@@ -22,14 +22,15 @@ const createProductionDeps: CreateDeps = async (config) => {
   return { deps, close };
 };
 
-export async function startServer(
+/** Builds a ready app without binding a port (serverless platforms feed it requests directly). */
+export async function createServerApp(
   env: NodeJS.ProcessEnv = process.env,
   opts: { createDeps?: CreateDeps } = {},
-): Promise<{ app: FastifyInstance; stop(): Promise<void> }> {
+): Promise<{ app: FastifyInstance; config: Config; stop(): Promise<void> }> {
   const config = loadConfig(env);
   const { deps, close } = await (opts.createDeps ?? createProductionDeps)(config);
   const app = await buildApp(deps);
-  await app.listen({ host: config.host, port: config.port });
+  await app.ready();
 
   let stopping: Promise<void> | undefined;
   const stop = () =>
@@ -40,5 +41,15 @@ export async function startServer(
       await close();
     })());
 
+  return { app, config, stop };
+}
+
+/** Builds the app and listens on HOST:PORT (Docker, `npm start`). */
+export async function startServer(
+  env: NodeJS.ProcessEnv = process.env,
+  opts: { createDeps?: CreateDeps } = {},
+): Promise<{ app: FastifyInstance; stop(): Promise<void> }> {
+  const { app, config, stop } = await createServerApp(env, opts);
+  await app.listen({ host: config.host, port: config.port });
   return { app, stop };
 }

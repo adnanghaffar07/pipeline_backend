@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 
-// Vercel's Fastify preset takes the first of these that exists and expects it to call listen().
+// Vercel's Fastify preset chooses its entrypoint among these names.
 const VERCEL_ENTRY_ORDER = ['src/app', 'src/index', 'src/server', 'app', 'index', 'server'];
 const EXTENSIONS = ['js', 'mjs', 'cjs', 'ts', 'cts', 'mts'];
 
@@ -23,12 +23,14 @@ describe('deployment entrypoint', () => {
     expect(readFileSync(`${root}/src/index.ts`, 'utf8')).toMatch(/from 'fastify'/);
   });
 
-  // Vercel imports the entrypoint (it doesn't run it), and its Node runtime cannot require() ES modules:
-  // a dependency doing that crashed the deployed function, so run the same way and serve the docs too.
-  it('starts when imported the way Vercel loads it, without require(esm), docs included', async () => {
+  // Both runs use tsx/esm (not tsx, which patches require()) with require(esm) off, as on Vercel's Node,
+  // so an ESM-only transitive dependency fails here too. Docs are on so their plugins load.
+  it.each([
+    ['loaded by Vercel (listen() never calls back)', 'tests/helpers/vercel-loader.mjs', { VERCEL: '1' }],
+    ['run directly (Docker, npm start)', 'src/index.ts', {}],
+  ])('serves requests when %s', async (_name, script, extraEnv) => {
     const port = 39_000 + Math.floor(Math.random() * 1000);
-    // tsx/esm (not tsx) leaves require() unpatched, so an ESM-only transitive dependency fails here as on Vercel.
-    const nodeArgs = ['--no-experimental-require-module', '--import', 'tsx/esm', '-e', "await import('./src/index.ts')"];
+    const nodeArgs = ['--no-experimental-require-module', '--import', 'tsx/esm', script, String(port)];
     const child = spawn(process.execPath, nodeArgs, {
       cwd: root,
       env: {
@@ -38,7 +40,7 @@ describe('deployment entrypoint', () => {
         LOG_LEVEL: 'silent',
         HOST: '127.0.0.1',
         PORT: String(port),
-        // Nothing here is contacted by /health/live: postgres.js and the Supabase clients connect lazily.
+        // Nothing here is contacted by these routes: postgres.js and the Supabase clients connect lazily.
         DATABASE_URL: 'postgres://u:p@127.0.0.1:1/db',
         SUPABASE_URL: 'https://test.supabase.co',
         SUPABASE_ANON_KEY: 'anon',
@@ -49,15 +51,17 @@ describe('deployment entrypoint', () => {
         EMAIL_FROM: 'Pipeline <no-reply@example.com>',
         TERMS_VERSION: 'test-terms',
         DOCS_ENABLED: 'true',
+        ...extraEnv,
       },
       stdio: ['ignore', 'ignore', 'pipe'],
     });
     let stderr = '';
     child.stderr.on('data', (d) => (stderr += String(d)));
+    const url = (path: string) => `http://127.0.0.1:${port}${path}`;
     try {
       let status = 0;
       for (let i = 0; i < 60 && status !== 200; i++) {
-        status = await fetch(`http://127.0.0.1:${port}/health/live`).then(
+        status = await fetch(url('/health/live'), { signal: AbortSignal.timeout(2000) }).then(
           (r) => r.status,
           () => 0,
         );
@@ -65,14 +69,14 @@ describe('deployment entrypoint', () => {
         if (child.exitCode !== null) break;
       }
       expect(status, stderr).toBe(200);
-      const docs = await fetch(`http://127.0.0.1:${port}/docs`);
+      const docs = await fetch(url('/docs'));
       expect(docs.status).toBe(200);
       expect(docs.headers.get('content-type')).toMatch(/text\/html/);
       expect(await docs.text()).toContain('/docs/json');
-      const spec = await fetch(`http://127.0.0.1:${port}/docs/json`);
+      const spec = await fetch(url('/docs/json'));
       expect(((await spec.json()) as { openapi: string }).openapi).toMatch(/^3\./);
     } finally {
       child.kill();
     }
-  }, 30_000);
+  }, 40_000);
 });
