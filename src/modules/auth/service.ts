@@ -59,6 +59,8 @@ export class AuthService {
       // An unverified registration can be taken over, so a typo'd or abandoned sign-up never locks the owner out.
       await auth.updateUser(existing.id, { password: input.password });
       await db.update(profiles).set(details).where(eq(profiles.id, existing.id));
+      // Otherwise a code sent for the earlier registration could activate the account with these new details.
+      await this.otp.invalidateOpen(existing.id, 'signup');
       userId = existing.id;
     } else {
       ({ id: userId } = await auth.createUser({ email: input.email, password: input.password }));

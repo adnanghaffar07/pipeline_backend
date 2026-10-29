@@ -18,3 +18,30 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t pipeline-backend:ci .
+      - name: Boot container and hit /health/live
+        run: |
+          docker run -d --name api -p 3000:3000 \
+            -e NODE_ENV=production \
+            -e DATABASE_URL=postgres://ci:ci@127.0.0.1:5432/ci \
+            -e SUPABASE_URL=https://example.supabase.co \
+            -e SUPABASE_ANON_KEY=ci -e SUPABASE_SERVICE_ROLE_KEY=ci \
+            -e SUPABASE_JWT_SECRET=ci-secret-ci-secret-ci-secret-ci-secret \
+            -e OTP_SECRET=ci-otp-secret-ci-otp-secret-ci-otp-secret \
+            -e RESEND_API_KEY=re_ci -e EMAIL_FROM=ci@example.com -e TERMS_VERSION=ci \
+            pipeline-backend:ci
+          for i in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:3000/health/live; then exit 0; fi
+            sleep 1
+          done
+          docker logs api
+          exit 1
+      - name: Migrator is present in the image
+        run: docker run --rm --entrypoint sh pipeline-backend:ci -c 'test -f dist/db/migrate.js && ls dist/db/migrations/0000_init.sql'

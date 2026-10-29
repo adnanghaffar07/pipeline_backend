@@ -36,8 +36,14 @@ export class RedisAttemptLimiter implements AttemptLimiter {
 
   async hit(key: string, { max, windowSec }: { max: number; windowSec: number }): Promise<LimitResult> {
     const k = `pipeline-al:${key}`;
-    const [[, count], [, ttl]] = (await this.redis.multi().incr(k).ttl(k).exec()) as [[null, number], [null, number]];
-    if (ttl < 0) await this.redis.expire(k, windowSec);
+    // Create the key with its expiry in the same MULTI as the increment, so it can never exist without a TTL.
+    const res = (await this.redis.multi().set(k, 0, 'EX', windowSec, 'NX').incr(k).ttl(k).exec()) as Array<
+      [Error | null, unknown]
+    >;
+    const failed = res.find(([err]) => err);
+    if (failed) throw failed[0];
+    const count = res[1]?.[1] as number;
+    const ttl = res[2]?.[1] as number;
     if (count <= max) return { allowed: true };
     return { allowed: false, retryAfterSec: ttl > 0 ? ttl : windowSec };
   }

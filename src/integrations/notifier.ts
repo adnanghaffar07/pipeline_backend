@@ -49,9 +49,7 @@ export class ResendNotifier implements Notifier {
       error = err;
     }
     if (error) {
-      throw new AppError('EMAIL_DELIVERY_FAILED', 'We could not send the email. Please try again shortly.', {
-        cause: error instanceof Error ? error.message : (error as { message?: string }).message,
-      });
+      throw new AppError('EMAIL_DELIVERY_FAILED', 'We could not send the email. Please try again shortly.', {}, { cause: error });
     }
   }
 }

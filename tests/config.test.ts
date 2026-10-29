@@ -27,6 +27,17 @@ describe('loadConfig', () => {
     expect(loadConfig({ ...base, LOGIN_OTP_REQUIRED: 'false' }).loginOtpRequired).toBe(false);
   });
 
+  it('parses TRUST_PROXY as boolean, hop count, or address list', () => {
+    expect(loadConfig(base).trustProxy).toBe(false);
+    expect(loadConfig({ ...base, TRUST_PROXY: 'false' }).trustProxy).toBe(false);
+    expect(loadConfig({ ...base, TRUST_PROXY: '1' }).trustProxy).toBe(1);
+    expect(loadConfig({ ...base, TRUST_PROXY: '10.0.0.0/8, 127.0.0.1' }).trustProxy).toBe('10.0.0.0/8,127.0.0.1');
+  });
+
+  it('rejects TRUST_PROXY=true, which would trust a spoofable X-Forwarded-For', () => {
+    expect(() => loadConfig({ ...base, TRUST_PROXY: 'true' })).toThrow(/TRUST_PROXY/);
+  });
+
   it('rejects short OTP_SECRET', () => {
     expect(() => loadConfig({ ...base, OTP_SECRET: 'short' })).toThrow(/OTP_SECRET/);
   });

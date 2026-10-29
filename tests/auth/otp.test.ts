@@ -145,6 +145,37 @@ describe('OtpService', () => {
     await expect(issue()).resolves.toBeDefined();
   });
 
+  it('counts the hourly cap per purpose, so reset requests cannot block login codes', async () => {
+    const reset = () => otp.issue({ userId: null, purpose: 'password_reset', channel: 'email', destination: email, deliver: false });
+    for (let i = 0; i < 10; i++) await reset();
+    expect(await errorCode(reset())).toBe('OTP_RATE_LIMITED');
+    await expect(issue()).resolves.toBeDefined();
+  });
+
+  it('stops issuing codes after 10 wrong guesses in 24 hours for a destination and purpose', async () => {
+    const burn = async () => {
+      const { challengeId } = await issue();
+      const good = notifier.lastCode(email);
+      for (let i = 0; i < 5; i++) await otp.verify(challengeId, wrongCode(good)).catch(() => undefined);
+    };
+    await burn();
+    advance(3601);
+    await burn();
+    advance(3601);
+    expect(await errorCode(issue())).toBe('OTP_RATE_LIMITED');
+    const other = await otp.issue({ userId, purpose: 'password_reset', channel: 'email', destination: email });
+    expect(other.challengeId).toBeDefined();
+    advance(24 * 3600);
+    await expect(issue()).resolves.toBeDefined();
+  });
+
+  it('invalidateOpen consumes outstanding challenges for a user and purpose', async () => {
+    const { challengeId } = await otp.issue({ userId, purpose: 'signup', channel: 'email', destination: email });
+    const code = notifier.lastCode(email);
+    await otp.invalidateOpen(userId, 'signup');
+    expect(await errorCode(otp.verify(challengeId, code))).toBe('OTP_ALREADY_USED');
+  });
+
   it('unknown or malformed ids are CHALLENGE_NOT_FOUND', async () => {
     expect(await errorCode(otp.verify(randomUUID(), '1234'))).toBe('CHALLENGE_NOT_FOUND');
     expect(await errorCode(otp.verify('not-a-uuid', '1234'))).toBe('CHALLENGE_NOT_FOUND');

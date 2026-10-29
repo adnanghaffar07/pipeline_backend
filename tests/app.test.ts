@@ -1,4 +1,6 @@
+import { randomUUID } from 'node:crypto';
 import { Writable } from 'node:stream';
+import { profiles } from '../src/db/schema.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import type { FastifyInstance } from 'fastify';
@@ -37,6 +39,13 @@ async function makeApp(overrides: Partial<Config> = {}, logStream?: Writable): P
     throw new Error('database password leaked in stack');
   });
   r.get('/t/ok', async () => ({ ok: true }));
+  r.get('/t/provider-down', async () => {
+    throw new AppError('EMAIL_DELIVERY_FAILED', 'down', {}, { cause: new Error('upstream said no') });
+  });
+  r.get('/t/bad-query', async () => {
+    // Fails on the missing FK target; drizzle puts the bound params into the error.
+    await t.db.insert(profiles).values({ id: randomUUID(), email: 'SECRET-PARAM@example.com', fullName: 'x', status: 'active' });
+  });
   r.post('/t/log', async (req) => {
     req.log.info({ body: req.body, headers: req.headers }, 'debug dump');
     return { ok: true };
@@ -132,6 +141,27 @@ describe('app skeleton', () => {
     expect(out).toContain('[REDACTED]');
     expect(out).not.toContain('secret123');
     expect(out).not.toContain('secret-token-xyz');
+    await app.close();
+  });
+
+  it('logs error codes and causes but never failed-query parameter values', async () => {
+    const lines: string[] = [];
+    const stream = new Writable({
+      write(chunk, _enc, cb) {
+        lines.push(String(chunk));
+        cb();
+      },
+    });
+    const app = await makeApp({ logLevel: 'info' }, stream);
+    const down = await app.inject({ method: 'GET', url: '/t/provider-down' });
+    expect(down.json()).toEqual({ error: { code: 'EMAIL_DELIVERY_FAILED', message: 'down' } });
+    const bad = await app.inject({ method: 'GET', url: '/t/bad-query' });
+    expect(bad.statusCode).toBe(500);
+    const out = lines.join('');
+    expect(out).toContain('"code":"EMAIL_DELIVERY_FAILED"');
+    expect(out).toContain('upstream said no');
+    expect(out).toContain('Failed query');
+    expect(out).not.toContain('SECRET-PARAM');
     await app.close();
   });
 

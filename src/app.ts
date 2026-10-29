@@ -38,7 +38,11 @@ export async function buildApp(deps: AppDeps, opts: BuildOptions = {}): Promise<
     logger: loggerOptions(config, opts.logStream),
     genReqId,
     requestIdLogLabel: 'requestId',
-    trustProxy: config.trustProxy,
+    // A hop count N means "trust the N nearest proxies".
+    trustProxy:
+      typeof config.trustProxy === 'number'
+        ? (_addr: string, hop: number) => hop < (config.trustProxy as number)
+        : config.trustProxy,
     bodyLimit: 100 * 1024,
     disableRequestLogging: false,
   });

@@ -1,5 +1,6 @@
 import { createHmac, randomInt, timingSafeEqual } from 'node:crypto';
-import { and, count, eq, gt, isNull } from 'drizzle-orm';
+import { isIP } from 'node:net';
+import { and, count, eq, gt, isNull, sum } from 'drizzle-orm';
 import type { Config } from '../../config.js';
 import type { Db } from '../../db/client.js';
 import { otpChallenges, type OtpChannel, type OtpPurpose } from '../../db/schema.js';
@@ -9,6 +10,7 @@ import { AppError } from '../../lib/errors.js';
 
 const MAX_RESENDS = 5;
 const MAX_CHALLENGES_PER_HOUR = 10;
+const MAX_FAILED_ATTEMPTS_PER_DAY = 10;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function generateCode(): string {
@@ -76,12 +78,19 @@ export class OtpService {
     deliver?: boolean;
   }): Promise<ChallengeInfo> {
     const now = this.now();
-    const hourAgo = new Date(now.getTime() - 3600 * 1000);
+    // Both caps are per purpose, so e.g. anonymous reset requests can never block someone's login codes.
+    const scope = and(eq(otpChallenges.destination, input.destination), eq(otpChallenges.purpose, input.purpose));
     const [recent] = await this.db
       .select({ n: count() })
       .from(otpChallenges)
-      .where(and(eq(otpChallenges.destination, input.destination), gt(otpChallenges.createdAt, hourAgo)));
-    if ((recent?.n ?? 0) >= MAX_CHALLENGES_PER_HOUR) {
+      .where(and(scope, gt(otpChallenges.createdAt, new Date(now.getTime() - 3600 * 1000))));
+    // 4 digits only resist guessing if guesses are scarce: without this, 10 challenges/hour x 5 attempts
+    // would allow ~1,200 guesses a day against a 10,000-code space.
+    const [failed] = await this.db
+      .select({ n: sum(otpChallenges.attempts).mapWith(Number) })
+      .from(otpChallenges)
+      .where(and(scope, gt(otpChallenges.createdAt, new Date(now.getTime() - 24 * 3600 * 1000))));
+    if ((recent?.n ?? 0) >= MAX_CHALLENGES_PER_HOUR || (failed?.n ?? 0) >= MAX_FAILED_ATTEMPTS_PER_DAY) {
       throw new AppError('OTP_RATE_LIMITED', 'Too many verification codes requested. Please try again later.');
     }
 
@@ -94,7 +103,8 @@ export class OtpService {
         channel: input.channel,
         destination: input.destination,
         codeHash: hashCode(code, this.config.otpSecret),
-        createdIp: input.ip ?? null,
+        // Audit only; a malformed forwarded address must never fail the request.
+        createdIp: input.ip && isIP(input.ip) ? input.ip : null,
         createdAt: now,
         ...this.windows(now),
       })
@@ -110,6 +120,14 @@ export class OtpService {
       }
     }
     return this.info(row);
+  }
+
+  /** Marks every unused challenge of this purpose as used, so only a newly issued code can succeed. */
+  async invalidateOpen(userId: string, purpose: OtpPurpose): Promise<void> {
+    await this.db
+      .update(otpChallenges)
+      .set({ consumedAt: this.now() })
+      .where(and(eq(otpChallenges.userId, userId), eq(otpChallenges.purpose, purpose), isNull(otpChallenges.consumedAt)));
   }
 
   async resend(challengeId: string): Promise<ChallengeInfo> {

@@ -44,6 +44,18 @@ describe('ResendNotifier', () => {
     await expect(p).rejects.toMatchObject({ code: 'EMAIL_DELIVERY_FAILED' });
   });
 
+  it('keeps the Resend error text out of the client-visible extra', async () => {
+    const { client } = fakeResend({
+      data: null,
+      error: { name: 'validation_error', message: 'You can only send testing emails to owner@corp.com' },
+    });
+    const err = await new ResendNotifier(client as never, 'x@y.com')
+      .sendOtp({ channel: 'email', destination: 'a@b.com', code: '1234', purpose: 'signup' })
+      .catch((e: unknown) => e);
+    expect(JSON.stringify((err as AppError).extra)).not.toContain('owner@corp.com');
+    expect((err as Error).cause).toBeDefined();
+  });
+
   it('maps a thrown network error to EMAIL_DELIVERY_FAILED', async () => {
     const client = { emails: { send: vi.fn().mockRejectedValue(new Error('ECONNRESET')) } };
     const p = new ResendNotifier(client as never, 'x@y.com').sendOtp({

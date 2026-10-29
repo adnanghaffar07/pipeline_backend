@@ -1,7 +1,6 @@
 import {
   createClient,
   isAuthApiError,
-  isAuthRetryableFetchError,
   type AuthError,
   type Session,
   type SupabaseClient,
@@ -44,15 +43,34 @@ function toSession(s: Session): AuthSession {
   return { accessToken: s.access_token, refreshToken: s.refresh_token, expiresIn: s.expires_in, userId: s.user.id };
 }
 
-function isUnavailable(err: AuthError): boolean {
-  return isAuthRetryableFetchError(err) || (err.status ?? 0) >= 500 || err.status === 0;
+/**
+ * Errors that genuinely mean "these credentials/tokens are no good". Everything else — Supabase's own
+ * per-IP rate limit (429), 5xx, network failures, non-JSON bodies — is an outage, not the user's fault.
+ */
+const REJECTION_CODES = new Set([
+  'invalid_credentials',
+  'email_not_confirmed',
+  'user_banned',
+  'refresh_token_not_found',
+  'refresh_token_already_used',
+  'session_not_found',
+  'session_expired',
+  'bad_jwt',
+  'user_not_found',
+]);
+
+function isRejection(err: AuthError): boolean {
+  return isAuthApiError(err) && err.status !== 429 && (err.status ?? 0) < 500 && REJECTION_CODES.has(err.code ?? '');
 }
 
-/** Anything we don't explicitly expect becomes a 503 so the client can retry; details go to the logs. */
+function isUnavailable(err: AuthError): boolean {
+  // Network failures (AuthRetryableFetchError) and non-JSON bodies (AuthUnknownError) are not AuthApiErrors.
+  return !isAuthApiError(err) || err.status === 429 || (err.status ?? 0) >= 500;
+}
+
+/** Anything we don't explicitly expect becomes a 503 so the client can retry; details go to the logs only. */
 function unavailable(err: unknown): AppError {
-  return new AppError('AUTH_PROVIDER_UNAVAILABLE', 'Authentication service is temporarily unavailable', {
-    cause: err instanceof Error ? err.message : String(err),
-  });
+  return new AppError('AUTH_PROVIDER_UNAVAILABLE', 'Authentication service is temporarily unavailable', {}, { cause: err });
 }
 
 function weakPassword(err: AuthError): AppError | null {
@@ -105,8 +123,8 @@ export class SupabaseAuthProvider implements AuthProvider {
   async verifyPassword(email: string, password: string) {
     const { data, error } = await this.clients.anon().auth.signInWithPassword({ email, password });
     if (error) {
-      if (isUnavailable(error)) throw unavailable(error);
-      return null; // invalid_credentials, email_not_confirmed, user_banned, ...: all look the same to the caller
+      if (!isRejection(error)) throw unavailable(error);
+      return null; // invalid_credentials, email_not_confirmed, user_banned: all look the same to the caller
     }
     return data.session ? toSession(data.session) : null;
   }
@@ -124,7 +142,7 @@ export class SupabaseAuthProvider implements AuthProvider {
   async refresh(refreshToken: string) {
     const { data, error } = await this.clients.anon().auth.refreshSession({ refresh_token: refreshToken });
     if (error) {
-      if (isUnavailable(error)) throw unavailable(error);
+      if (!isRejection(error)) throw unavailable(error);
       return null;
     }
     return data.session ? toSession(data.session) : null;
@@ -141,8 +159,9 @@ export class SupabaseAuthProvider implements AuthProvider {
       .anon()
       .auth.signInWithIdToken({ provider, token: idToken, ...(nonce ? { nonce } : {}) });
     if (error) {
+      // A rejected ID token is a 4xx AuthApiError (bad_jwt, validation_failed, provider_disabled, ...).
       if (isUnavailable(error)) throw unavailable(error);
-      throw new AppError('UNAUTHORIZED', 'Sign-in with this provider failed');
+      throw new AppError('UNAUTHORIZED', 'Sign-in with this provider failed', {}, { cause: error });
     }
     if (!data.session || !data.user.email) throw new AppError('UNAUTHORIZED', 'Sign-in with this provider failed');
     const meta = data.user.user_metadata ?? {};

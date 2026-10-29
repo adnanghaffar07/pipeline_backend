@@ -39,12 +39,14 @@ export interface ErrorExtra {
 export class AppError extends Error {
   readonly statusCode: number;
 
+  /** `extra` is sent to the client; `options.cause` is only logged. */
   constructor(
     readonly code: ErrorCode,
     message: string,
     readonly extra: ErrorExtra = {},
+    options?: { cause?: unknown },
   ) {
-    super(message);
+    super(message, options);
     this.name = 'AppError';
     this.statusCode = STATUS[code];
   }

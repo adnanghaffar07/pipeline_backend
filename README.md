@@ -21,8 +21,9 @@ Supabase (Postgres + Auth), Resend for email.
 2. `otp/verify` with `challengeId` + `code` returns `accessToken` (15 min), `refreshToken`, `isNewUser` and the user.
 3. Send `Authorization: Bearer <accessToken>` on protected calls; use `auth/refresh` when it expires. Refresh tokens rotate — always store the newest one.
 
-Codes expire after 5 minutes, allow 5 wrong attempts, can be resent after 27 seconds (max 5 times), and a single
-address can request at most 10 per hour. `LOGIN_OTP_REQUIRED=false` makes login return tokens directly.
+Codes expire after 5 minutes, allow 5 wrong attempts, can be resent after 27 seconds (max 5 times). Per address
+and purpose (sign-up, login, reset): at most 10 codes per hour, and no new codes after 10 wrong guesses in 24 hours.
+`LOGIN_OTP_REQUIRED=false` makes login return tokens directly.
 
 Errors always look like `{ "error": { "code": "OTP_INVALID", "message": "...", "fields"?: {...} } }`.
 Lists look like `{ "items": [], "nextCursor": null, "total": 0 }`.
@@ -53,6 +54,10 @@ production it refuses `NOTIFIER=console`.
 - Authentication → Sign In / Providers → Email: enabled, **Confirm email on**.
 - Authentication → Sessions / JWT: access token expiry **900** seconds; refresh token rotation and reuse detection on (default).
 - Google / Azure providers: enable and add the mobile app's client IDs when OAuth sign-in is wanted.
+- Authentication → Rate Limits: every auth call comes from this server's IP, so Supabase's per-IP limits are
+  shared by all users. Each login uses two limited calls (password check + session). Raise the sign-in and
+  token-refresh limits before launch; when they are hit the API answers `503 AUTH_PROVIDER_UNAVAILABLE`
+  (it never reports a Supabase rate limit as a wrong password or an expired session).
 - All our tables have row-level security on with no policies: the anon key cannot read them through the Supabase REST API. Only this server (direct Postgres connection) can.
 
 ## Scripts
@@ -75,8 +80,9 @@ docker run -d --env-file .env -p 3000:3000 pipeline-backend
 ```
 
 The container runs as a non-root user, exposes a health check on `/health/live`, and shuts down gracefully on
-`SIGTERM` (in-flight requests get up to 10 s). Set `TRUST_PROXY=true` behind a load balancer so rate limits see
-real client IPs.
+`SIGTERM` (in-flight requests get up to 10 s). Behind a load balancer set `TRUST_PROXY` to the number of proxy
+hops (usually `1`) or the proxies' IP/CIDR list, so rate limits see real client IPs. `true` is rejected because
+it would let clients spoof their IP via `X-Forwarded-For`.
 
 ## Manual smoke test (real Supabase + Resend)
 

@@ -66,6 +66,18 @@ describe('POST /auth/register', () => {
     expect(p?.fullName).toBe('Real Owner');
   });
 
+  it('re-registering invalidates the earlier sign-up code', async () => {
+    const email = uniqueEmail();
+    const first = await post('/register', registerBody(email, { password: 'victim-pass-1' }));
+    const firstCode = t.notifier.lastCode(email);
+    const second = await post('/register', registerBody(email, { password: 'attacker-pass-2' }));
+    const stale = await post('/otp/verify', { challengeId: first.json().challengeId, code: firstCode });
+    expect(stale.statusCode).toBe(409);
+    expect(stale.json().error.code).toBe('OTP_ALREADY_USED');
+    const fresh = await post('/otp/verify', { challengeId: second.json().challengeId, code: t.notifier.lastCode(email) });
+    expect(fresh.statusCode).toBe(200);
+  });
+
   it('returns 503 EMAIL_DELIVERY_FAILED when email sending fails', async () => {
     t.notifier.failNext();
     const res = await post('/register', registerBody(uniqueEmail()));
@@ -187,6 +199,24 @@ describe('POST /auth/login', () => {
     const res = await post('/otp/verify', { challengeId: f.json().challengeId, code: t.notifier.lastCode(email) });
     expect(res.statusCode).toBe(400);
     expect(res.json().error.code).toBe('WRONG_CHALLENGE');
+  });
+});
+
+describe('client IP handling', () => {
+  it('ignores an unparseable forwarded address instead of failing the request', async () => {
+    const t4 = await createTestApp({ trustProxy: true });
+    try {
+      const email = uniqueEmail();
+      const res = await t4.app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/register',
+        headers: { 'x-forwarded-for': 'not-an-ip' },
+        payload: registerBody(email),
+      });
+      expect(res.statusCode).toBe(201);
+    } finally {
+      await t4.close();
+    }
   });
 });
 

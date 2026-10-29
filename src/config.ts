@@ -5,7 +5,7 @@ export interface Config {
   host: string;
   port: number;
   logLevel: string;
-  trustProxy: boolean;
+  trustProxy: boolean | number | string;
   databaseUrl: string;
   supabaseUrl: string;
   supabaseAnonKey: string;
@@ -38,7 +38,24 @@ const envSchema = z
     HOST: z.string().default('0.0.0.0'),
     PORT: z.coerce.number().int().min(0).max(65535).default(3000),
     LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
-    TRUST_PROXY: bool.default(false),
+    // `true` would trust any X-Forwarded-For hop (client-controlled), so require a hop count or address list.
+    TRUST_PROXY: z
+      .string()
+      .default('false')
+      .transform((v, ctx) => {
+        const s = v.trim();
+        if (s === '' || s === 'false') return false;
+        if (/^\d+$/.test(s)) return Number(s);
+        if (s === 'true') {
+          ctx.addIssue({ code: 'custom', message: 'use a hop count (e.g. 1) or proxy address list instead of true' });
+          return z.NEVER;
+        }
+        return s
+          .split(',')
+          .map((p) => p.trim())
+          .filter(Boolean)
+          .join(',');
+      }),
     DATABASE_URL: z.string().regex(/^postgres(ql)?:\/\//, 'must be a postgres:// connection string'),
     SUPABASE_URL: z.url().transform((u) => u.replace(/\/+$/, '')),
     SUPABASE_ANON_KEY: z.string().min(1),

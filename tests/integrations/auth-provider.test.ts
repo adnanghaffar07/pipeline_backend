@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { AuthApiError, AuthRetryableFetchError } from '@supabase/supabase-js';
+import { AuthApiError, AuthRetryableFetchError, AuthUnknownError } from '@supabase/supabase-js';
 import { SupabaseAuthProvider } from '../../src/integrations/auth-provider.js';
 import { testConfig } from '../helpers/test-config.js';
 
@@ -65,6 +65,45 @@ describe('SupabaseAuthProvider', () => {
       error: new AuthRetryableFetchError('fetch failed', 0),
     });
     await expect(provider.verifyPassword('a@b.com', 'x')).rejects.toMatchObject({ code: 'AUTH_PROVIDER_UNAVAILABLE' });
+  });
+
+  it('treats a Supabase 429 as unavailable, not as wrong credentials', async () => {
+    const { anon, provider } = stubs();
+    anon.auth.signInWithPassword.mockResolvedValue({
+      data: { session: null, user: null },
+      error: new AuthApiError('Request rate limit reached', 429, 'over_request_rate_limit'),
+    });
+    await expect(provider.verifyPassword('a@b.com', 'x')).rejects.toMatchObject({ code: 'AUTH_PROVIDER_UNAVAILABLE' });
+    anon.auth.refreshSession.mockResolvedValue({
+      data: { session: null, user: null },
+      error: new AuthApiError('Request rate limit reached', 429, 'over_request_rate_limit'),
+    });
+    await expect(provider.refresh('rt')).rejects.toMatchObject({ code: 'AUTH_PROVIDER_UNAVAILABLE' });
+  });
+
+  it('treats an unknown (non-JSON) error as unavailable', async () => {
+    const { anon, provider } = stubs();
+    anon.auth.refreshSession.mockResolvedValue({
+      data: { session: null, user: null },
+      error: new AuthUnknownError('Unexpected token <', new Error('html')),
+    });
+    await expect(provider.refresh('rt')).rejects.toMatchObject({ code: 'AUTH_PROVIDER_UNAVAILABLE' });
+    anon.auth.signInWithIdToken.mockResolvedValue({
+      data: { session: null, user: null },
+      error: new AuthUnknownError('Unexpected token <', new Error('html')),
+    });
+    await expect(provider.signInWithIdToken('google', 't')).rejects.toMatchObject({ code: 'AUTH_PROVIDER_UNAVAILABLE' });
+  });
+
+  it('does not put provider error text in the client-visible extra', async () => {
+    const { anon, provider } = stubs();
+    anon.auth.signInWithPassword.mockResolvedValue({
+      data: { session: null, user: null },
+      error: new AuthRetryableFetchError('internal host db-7 refused', 0),
+    });
+    const err = await provider.verifyPassword('a@b.com', 'x').catch((e: unknown) => e);
+    expect(JSON.stringify((err as { extra: unknown }).extra)).not.toContain('db-7');
+    expect((err as Error).cause).toBeDefined();
   });
 
   it('createUser maps an existing email to EMAIL_TAKEN', async () => {
