@@ -5,6 +5,7 @@ import type { AppDeps } from '../../create-app.js';
 import { profiles } from '../../db/schema.js';
 import { AppError } from '../../lib/errors.js';
 import { toUserView, userViewSchema } from './view.js';
+import { xpTotal } from '../xp/engine.js';
 
 const meResponse = userViewSchema.extend({ unreadNotifications: z.number().int() });
 
@@ -17,7 +18,7 @@ export const meRoutes: FastifyPluginAsyncZod<{ deps: AppDeps }> = async (app, { 
     const [profile] = await deps.db.select().from(profiles).where(eq(profiles.id, req.user.id));
     if (!profile) throw new AppError('UNAUTHORIZED', 'Account not found or not active');
     // unreadNotifications is a placeholder until the notifications module exists.
-    return { ...toUserView(profile), unreadNotifications: 0 };
+    return { ...toUserView(profile, await xpTotal(deps.db, profile.id)), unreadNotifications: 0 };
   });
 
   // Deleting the Supabase user cascades to every row that references auth.users.

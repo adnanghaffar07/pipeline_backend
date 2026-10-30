@@ -6,6 +6,7 @@ import type { AttemptLimiter } from '../../lib/attempt-limiter.js';
 import { AppError } from '../../lib/errors.js';
 import { decodeCursor, encodeCursor, listEnvelope } from '../../lib/pagination.js';
 import type { commentView } from './schemas.js';
+import { XpEngine } from '../xp/engine.js';
 
 type CommentView = z.infer<typeof commentView>;
 
@@ -43,10 +44,14 @@ function readCursor(raw: string | undefined): Cursor | null {
 }
 
 export class CommentsService {
+  private readonly xp: XpEngine;
+
   constructor(
     private readonly db: Db,
     private readonly limiter: AttemptLimiter,
-  ) {}
+  ) {
+    this.xp = new XpEngine(db);
+  }
 
   private select(me: string) {
     return this.db
@@ -181,7 +186,6 @@ export class CommentsService {
     if (dup) throw new AppError('DUPLICATE_COMMENT', 'You already posted this comment');
   }
 
-  // Comment XP (+3, daily cap) and reply XP (+2, daily limit) are awarded here once the XP module lands.
   async create(me: string, articleId: string, text: string) {
     const scope = and(eq(comments.targetType, 'article'), eq(comments.targetId, articleId), isNull(comments.parentId))!;
     await this.checkPosting(me, text, scope);
@@ -189,7 +193,10 @@ export class CommentsService {
       .insert(comments)
       .values({ targetType: 'article', targetId: articleId, userId: me, text })
       .returning({ id: comments.id });
-    return { comment: await this.view(me, row!.id), xpAwarded: 0 };
+    const { xpAwarded } = await this.xp.award(me, [
+      { type: 'comment', refType: 'article', refId: articleId, key: `comment:${row!.id}` },
+    ]);
+    return { comment: await this.view(me, row!.id), xpAwarded };
   }
 
   async reply(me: string, commentId: string, text: string) {
@@ -202,7 +209,10 @@ export class CommentsService {
       .insert(comments)
       .values({ targetType: target.targetType, targetId: target.targetId, parentId, userId: me, text })
       .returning({ id: comments.id });
-    return { comment: await this.view(me, row!.id), xpAwarded: 0 };
+    const { xpAwarded } = await this.xp.award(me, [
+      { type: 'reply', refType: target.targetType, refId: target.targetId, key: `reply:${row!.id}` },
+    ]);
+    return { comment: await this.view(me, row!.id), xpAwarded };
   }
 
   async remove(me: string, commentId: string) {
@@ -223,10 +233,19 @@ export class CommentsService {
     return { likeCount: row?.likeCount ?? 0, likedByMe: Boolean(row?.likedByMe) };
   }
 
-  // Like XP for the author (+1, anti-spam limits, never for self-likes) is awarded here once the XP module lands.
   async like(me: string, commentId: string) {
     const row = await this.findLive(commentId);
-    await this.db.insert(commentLikes).values({ commentId: row.id, userId: me }).onConflictDoNothing();
+    const added = await this.db
+      .insert(commentLikes)
+      .values({ commentId: row.id, userId: me })
+      .onConflictDoNothing()
+      .returning({ userId: commentLikes.userId });
+    // The author earns +1 per distinct liker (never for self-likes, capped daily); unlike + like again pays nothing more.
+    if (added.length > 0 && row.userId !== me) {
+      await this.xp.award(row.userId, [
+        { type: 'like_received', refType: 'comment', refId: row.id, key: `like:${row.id}:${me}`, silentIfPaid: true },
+      ]);
+    }
     return this.likeState(me, row.id);
   }
 

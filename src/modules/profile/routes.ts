@@ -1,5 +1,6 @@
 import multipart from '@fastify/multipart';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
+import { z } from 'zod';
 import type { AppDeps } from '../../create-app.js';
 import { AppError } from '../../lib/errors.js';
 import {
@@ -30,7 +31,7 @@ export const profileRoutes: FastifyPluginAsyncZod<{ deps: AppDeps }> = async (ap
 
   app.patch(
     '/profile',
-    { schema: { ...common, body: profilePatchBody, response: { 200: profileResponse } } },
+    { schema: { ...common, body: profilePatchBody, response: { 200: profileResponse.extend({ xpAwarded: z.number().int() }) } } },
     async (req) => service.updateProfile(req.user.id, req.body),
   );
 

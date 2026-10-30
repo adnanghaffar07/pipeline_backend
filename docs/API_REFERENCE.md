@@ -67,7 +67,7 @@
 }
 ```
 
-`subscription.status` is one of `free`, `active`, `grace`, `expired`, `canceled`. For now `xpTotal` is always `0`, `level` is always `1 / Explorer` and `subscription` is always `free`. These will change once those features are built.
+`subscription.status` is one of `free`, `active`, `grace`, `expired`, `canceled`. `xpTotal` and `level` are live (see Tech XP). `subscription` is always `free` until subscriptions are built.
 
 ---
 
@@ -134,6 +134,16 @@
 | 3.27 | DELETE | `/api/v1/comments/{commentId}` | Bearer | 204 |
 | 3.28 | POST | `/api/v1/comments/{commentId}/like` | Bearer | 200 |
 | 3.29 | DELETE | `/api/v1/comments/{commentId}/like` | Bearer | 200 |
+| 3.30 | POST | `/api/v1/events` | Bearer | 200 |
+| 3.31 | GET | `/api/v1/me/progress` | Bearer | 200 |
+| 3.32 | GET | `/api/v1/me/xp` | Bearer | 200 |
+| 3.33 | GET | `/api/v1/me/history` | Bearer | 200 |
+| 3.34 | GET | `/api/v1/me/streak` | Bearer | 200 |
+| 3.35 | GET | `/api/v1/me/tasks` | Bearer | 200 |
+| 3.36 | GET | `/api/v1/badges` | Bearer | 200 |
+| 3.37 | GET | `/api/v1/me/badges/next` | Bearer | 200 |
+| 3.38 | GET | `/api/v1/leaderboard` | Bearer | 200 |
+| 3.39 | GET | `/api/v1/xp/rules` | — | 200 |
 
 ---
 
@@ -715,7 +725,7 @@ To load more, call again with `?cursor=<nextCursor>`. `nextCursor: null` means t
 { "comment": { "...": "comment object" }, "xpAwarded": 0 }
 ```
 
-`xpAwarded` stays `0` until XP is built. Later it will carry the XP earned, for a "+3 XP" toast.
+`xpAwarded` is the XP this post earned: +3 for a comment, +2 for a reply, and 0 once the daily cap of 5 each is reached. Use it for a "+3 XP" toast.
 
 **Errors:** `422 VALIDATION_FAILED` (empty or over 500 characters), `409 DUPLICATE_COMMENT` (same text posted in the last 5 minutes), `429 RATE_LIMITED` (more than 10 comments a minute or 200 a day; includes `retryAfterSec`).
 
@@ -742,6 +752,165 @@ No body. Both are safe to repeat, and both return the new state:
 `404 COMMENT_NOT_FOUND` if the comment was deleted.
 
 > The server doesn't check yet that `articleId` exists. That check comes when the content API is connected, so only use ids from the content API.
+
+---
+
+## Tech XP
+
+The server owns all XP. The app reports what the user did with `POST /events`, and the server decides what it's worth. Every award is paid once, so a retry, double tap or offline replay never pays twice. Days, weeks and months use **UTC**, and weeks start on Monday.
+
+### XP values (`GET /api/v1/xp/rules`, public)
+
+Load XP chips and level names from this endpoint instead of hard-coding them.
+
+| Activity | XP | Rule |
+|---|---|---|
+| Read an article | 1 | once per article; at least 30 s on page and 80% scrolled |
+| Read a magazine article | 2 | same |
+| Read a sponsored article | 2 | same |
+| Sponsored quiz / poll | 5 | once per article |
+| Complete a magazine issue | 10 | once per issue |
+| Share content | 2 | once per item |
+| Attend a webinar | 5 | at least 80% watched, once |
+| Complete a webinar | 10 | at least 95% watched, once |
+| Listen to a podcast | 3 | at least 70% listened, once |
+| Download a report | 5 | once per report |
+| Save content | 1 | once per item |
+| Comment / reply | 3 / 2 | first 5 a day each |
+| Comment received a like | 1 | once per liker, first 10 a day, never self-likes |
+| Add job role / company | 5 each | once |
+| Add expertise areas | 10 | once |
+| Complete profile (100%) | 10 | once |
+| Select interests | 5 | once |
+
+**Levels:** 1 Explorer (0), 2 Enthusiast (101), 3 Techie (501), 4 Expert (1,501), 5 Guru (3,501), 6 Sage (7,501), 7 Visionary (15,000).
+
+**Streak bonuses:** 7 days +10, 14 days +25, 30 days +50, 90 days +150, 365 days +500. A day counts when the user reads, completes an issue, watches (a webinar or video) or listens past the thresholds above. The streak stays alive through today if yesterday was active.
+
+**Today's tasks** (bonus once per day): Read one article +1, Share an insight +2, Watch a video +10 (video or webinar), Explore Research Center +5.
+
+### 3.30 Report activity — `POST /api/v1/events` 🔒
+
+Send one event when the user finishes something. `refId` is the content id from the content API.
+
+| `type` | Body | When to send |
+|---|---|---|
+| `article_complete` | `refId`, `metadata: { kind: "regular" / "magazine" / "sponsored", secondsOnPage, scrollPercent }` | user leaves the article or reaches the end |
+| `quiz_complete` | `refId` | sponsored quiz or poll submitted |
+| `issue_complete` | `refId` | last article of an issue read |
+| `share` | `refType`, `refId`, `metadata: { channel }` | share sheet completed |
+| `webinar_progress` | `refId`, `metadata: { watchedPercent }` | on pause/close and at the end |
+| `podcast_progress` | `refId`, `metadata: { listenedPercent }` | on pause/close and at the end |
+| `video_progress` | `refId`, `metadata: { watchedPercent }` | on pause/close and at the end |
+| `report_download` | `refType: "report"` or `"research"`, `refId` | Download tapped |
+| `content_save` | `refType`, `refId` | bookmark saved |
+| `research_view` | nothing else | Research Center opened |
+
+`refType` is one of `article`, `news`, `issue`, `research`, `report`, `video`, `podcast` or `webinar`. Percentages run 0–100.
+
+```json
+{ "type": "article_complete", "refId": "article-123", "metadata": { "kind": "regular", "secondsOnPage": 140, "scrollPercent": 92 } }
+```
+
+**Response `200`**
+
+```json
+{
+  "accepted": true,
+  "reason": null,
+  "awards": [
+    { "type": "article_read", "label": "Read an article", "xp": 1 },
+    { "type": "task_bonus", "label": "Read one article", "xp": 1 }
+  ],
+  "xpAwarded": 2,
+  "xpTotal": 102,
+  "level": { "number": 2, "name": "Enthusiast", "minXp": 101, "nextLevelXp": 501, "xpToNext": 399 },
+  "leveledUp": true,
+  "newBadges": [{ "id": "first_read", "name": "First Read" }],
+  "streak": { "current": 3, "longest": 5 }
+}
+```
+
+- `accepted: false` → it didn't meet the threshold; `reason` explains why, e.g. "Read for at least 30 seconds and scroll 80% of the article".
+- `xpAwarded: 0` with `accepted: true` → already rewarded. That's normal; show nothing.
+- Show a toast for each award, a level-up screen when `leveledUp` is true, and a badge popup for each `newBadges` entry.
+- Errors: `422` (unknown type or a bad field), `429 RATE_LIMITED` (more than 60 events a minute).
+
+### 3.31 Progress tab — `GET /api/v1/me/progress` 🔒
+
+Everything the Progress screen needs in one call:
+
+```json
+{
+  "xpTotal": 680,
+  "level": { "number": 3, "name": "Techie", "minXp": 501, "nextLevelXp": 1501, "xpToNext": 821 },
+  "streak": { "current": 5, "longest": 12 },
+  "stats": { "xpThisWeek": 42, "articlesRead": 18, "currentStreak": 5 },
+  "dailyTasks": { "items": [{ "id": "read_article", "label": "Read one article", "xp": 1, "done": true }], "doneCount": 1, "totalCount": 4 },
+  "nextBadge": { "...": "badge object (3.36)" },
+  "recentBadges": [{ "...": "up to 3 most recently earned badges" }],
+  "profileCompletion": 80
+}
+```
+
+### 3.32 XP earned — `GET /api/v1/me/xp?period=week` (or `month`) 🔒
+
+```json
+{
+  "period": "week", "from": "2026-10-26", "to": "2026-11-01",
+  "total": 42, "previousTotal": 30, "growthPercent": 40,
+  "breakdown": [{ "type": "comment", "label": "Comment", "count": 4, "xpPerUnit": 3, "xp": 12 }],
+  "daily": [{ "date": "2026-10-26", "xp": 5 }, { "date": "2026-10-27", "xp": 0 }]
+}
+```
+
+`daily` has one entry per day of the period, for the bar chart. `growthPercent` is `null` when the previous period had no XP. `xpPerUnit` is `null` for bonuses.
+
+### 3.33 History — `GET /api/v1/me/history` 🔒
+
+Every XP award, newest first, using the same `limit` and `cursor` paging as comments. Items: `{ id, type, label, xp, refType, refId, createdAt }`. Load titles from the content API using `refType` and `refId`.
+
+### 3.34 Streak calendar — `GET /api/v1/me/streak?year=2026&month=10` 🔒
+
+```json
+{ "current": 5, "longest": 12, "year": 2026, "month": 10, "activeDates": ["2026-10-01", "2026-10-02"] }
+```
+
+Without `year` and `month` it returns the current month. Put a flame on each `activeDates` day.
+
+### 3.35 Today's tasks — `GET /api/v1/me/tasks` 🔒
+
+Same shape as `dailyTasks` in 3.31.
+
+### 3.36 Badges — `GET /api/v1/badges` 🔒 and 3.37 Next badge — `GET /api/v1/me/badges/next` 🔒
+
+```json
+{
+  "items": [{
+    "id": "reader", "name": "Reader", "description": "Read 50 articles", "group": "reading",
+    "earned": false, "earnedAt": null,
+    "requirements": [{ "label": "Read 50 articles", "current": 14, "target": 50, "unit": "articles", "percent": 28, "complete": false }],
+    "completedCount": 0, "totalCount": 1
+  }],
+  "earnedCount": 4, "totalCount": 13
+}
+```
+
+`/me/badges/next` returns the single unearned badge closest to completion (same object), or `null` when everything is earned. There are 13 badges in 4 groups: reading, webinars, podcasts and community.
+
+### 3.38 Leaderboard — `GET /api/v1/leaderboard?period=weekly&limit=50` 🔒
+
+`period` is `weekly`, `monthly` or `all_time`.
+
+```json
+{
+  "period": "weekly",
+  "items": [{ "rank": 1, "userId": "04bb34bb-…", "name": "Ayesha Munir", "initials": "AM", "avatarUrl": null, "xp": 120, "crown": "gold", "isMe": true }],
+  "me": { "rank": 1, "xp": 120, "xpThisWeek": 120 }
+}
+```
+
+`crown` is `gold`, `silver` or `bronze` for the top 3, otherwise `null`. `me` is always returned, even when the user is outside the top `limit`. `me.rank` is `null` when the user has no XP in the period. On a tie, whoever reached the score first ranks higher.
 
 ---
 

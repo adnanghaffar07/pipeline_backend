@@ -32,10 +32,12 @@ export const interestsRoutes: FastifyPluginAsyncZod<{ deps: AppDeps }> = async (
     async (req) => ({ topicIds: await service.getSelection(req.user.id) }),
   );
 
-  // The +5 XP "select interests" award is added when the gamification module lands.
   app.put(
     '/me/interests',
-    { ...secured, schema: { tags, security: [{ bearerAuth: [] }], body: selectionBody, response: { 200: selection } } },
-    async (req) => ({ topicIds: await service.replaceSelection(req.user.id, req.body.topicIds) }),
+    {
+      ...secured,
+      schema: { tags, security: [{ bearerAuth: [] }], body: selectionBody, response: { 200: selection.extend({ xpAwarded: z.number().int() }) } },
+    },
+    async (req) => service.replaceSelection(req.user.id, req.body.topicIds),
   );
 };

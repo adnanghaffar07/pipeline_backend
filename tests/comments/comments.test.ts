@@ -35,7 +35,7 @@ describe('posting and listing', () => {
     const res = await post(u, a, '  Great read on 5G slicing  ');
     expect(res.statusCode).toBe(201);
     const { comment, xpAwarded } = res.json();
-    expect(xpAwarded).toBe(0);
+    expect(xpAwarded).toBe(3);
     expect(comment).toMatchObject({
       articleId: a,
       parentId: null,

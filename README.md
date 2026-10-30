@@ -16,6 +16,7 @@ Supabase (Postgres + Auth), Resend for email.
 | Interests | `GET /interests/topics`, `GET /me/interests`, `PUT /me/interests` |
 | Profile and settings | `GET/PATCH /me/profile`, `POST/DELETE /me/avatar`, `GET/PATCH /me/settings`, `PUT /me/privacy/contact-sharing` |
 | Comments | `GET/POST /articles/{articleId}/comments`, `GET/POST /comments/{id}/replies`, `DELETE /comments/{id}`, `POST/DELETE /comments/{id}/like` |
+| Tech XP | `POST /events`, `GET /me/progress`, `/me/xp`, `/me/history`, `/me/streak`, `/me/tasks`, `/badges`, `/me/badges/next`, `/leaderboard`, `/xp/rules` (rules live in `src/modules/xp/config.ts`) |
 | Ops | `GET /health/live`, `GET /health/ready` (unversioned) |
 
 ### How sign-in works
@@ -121,6 +122,5 @@ Not covered by automated tests; run once per environment.
 ## Not yet built
 
 LinkedIn sign-in, changing the account email, SMS delivery (the notifier has an `sms` channel slot), and everything else in
-the requirements doc (content, library, XP, notifications, subscriptions, ads) — those are
-later sub-projects. `/me` returns `xpTotal: 0`, level 1 "Explorer", `subscription.status: "free"` and
-`unreadNotifications: 0` until those modules exist.
+the requirements doc (content, library, networking, notifications, subscriptions, ads) — those are
+later sub-projects. `/me` returns `subscription.status: "free"` and `unreadNotifications: 0` until those modules exist.

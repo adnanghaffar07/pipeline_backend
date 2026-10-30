@@ -6,6 +6,7 @@ import { profiles } from '../../db/schema.js';
 import type { AvatarStorage } from '../../integrations/avatar-storage.js';
 import { AppError } from '../../lib/errors.js';
 import { toE164 } from '../../lib/phone.js';
+import { XpEngine, type AwardInput } from '../xp/engine.js';
 import type { ProfilePatch, contactSharing, profileResponse, settingsPatchBody, settingsResponse } from './schemas.js';
 
 type Profile = typeof profiles.$inferSelect;
@@ -72,10 +73,14 @@ export function sniffImage(buf: Buffer): { mime: string; ext: string } | null {
 }
 
 export class ProfileService {
+  private readonly xp: XpEngine;
+
   constructor(
     private readonly db: Db,
     private readonly avatars: AvatarStorage,
-  ) {}
+  ) {
+    this.xp = new XpEngine(db);
+  }
 
   private async load(userId: string): Promise<Profile> {
     const [p] = await this.db.select().from(profiles).where(eq(profiles.id, userId));
@@ -93,7 +98,6 @@ export class ProfileService {
     return toProfileView(await this.load(userId));
   }
 
-  // Profile XP (+5 job role, +5 company, +10 expertise, +10 complete profile) is awarded here once the XP module lands.
   async updateProfile(userId: string, body: ProfilePatch) {
     const { email: _email, dialCode, mobile, ...rest } = body;
     const patch: Partial<typeof profiles.$inferInsert> = { ...rest };
@@ -113,7 +117,20 @@ export class ProfileService {
       patch.phoneE164 = toE164(nextDial, nextMobile);
     }
 
-    return toProfileView(await this.save(userId, patch));
+    const saved = await this.save(userId, patch);
+    return { ...toProfileView(saved), xpAwarded: await this.awardProfileXp(saved) };
+  }
+
+  /** Each profile milestone pays once, ever; clearing and re-filling a field earns nothing more. */
+  private async awardProfileXp(p: Profile): Promise<number> {
+    const inputs: AwardInput[] = [];
+    const once = (type: AwardInput['type'], when: boolean) => when && inputs.push({ type, key: type, silentIfPaid: true });
+    once('profile_job_title', Boolean(p.jobTitle));
+    once('profile_company', Boolean(p.company));
+    once('profile_expertise', p.expertiseAreas.length > 0);
+    once('profile_complete', completion(p).percent === 100);
+    if (inputs.length === 0) return 0;
+    return (await this.xp.award(p.id, inputs)).xpAwarded;
   }
 
   async getSettings(userId: string) {

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { profiles } from '../../db/schema.js';
+import { levelFor } from '../xp/config.js';
 
 export const userViewSchema = z.object({
   id: z.string(),
@@ -13,15 +14,16 @@ export const userViewSchema = z.object({
 
 export type UserView = z.infer<typeof userViewSchema>;
 
-/** XP, level and subscription are fixed defaults until the gamification and subscription modules exist. */
-export function toUserView(p: typeof profiles.$inferSelect): UserView {
+/** Subscription is a fixed default until the subscription module exists. */
+export function toUserView(p: typeof profiles.$inferSelect, xpTotal: number): UserView {
+  const level = levelFor(xpTotal);
   return {
     id: p.id,
     fullName: p.fullName,
     email: p.email,
     avatarUrl: p.avatarUrl,
-    xpTotal: 0,
-    level: { number: 1, name: 'Explorer' },
+    xpTotal,
+    level: { number: level.number, name: level.name },
     subscription: { status: 'free' },
   };
 }

@@ -2,6 +2,7 @@ import { asc, eq, inArray } from 'drizzle-orm';
 import type { Db } from '../../db/client.js';
 import { interestTopics, userInterests } from '../../db/schema.js';
 import { AppError } from '../../lib/errors.js';
+import { XpEngine } from '../xp/engine.js';
 
 export class InterestsService {
   constructor(private readonly db: Db) {}
@@ -23,7 +24,7 @@ export class InterestsService {
     return rows.map((r) => r.id);
   }
 
-  async replaceSelection(userId: string, topicIds: number[]): Promise<number[]> {
+  async replaceSelection(userId: string, topicIds: number[]): Promise<{ topicIds: number[]; xpAwarded: number }> {
     const known = await this.db
       .select({ id: interestTopics.id })
       .from(interestTopics)
@@ -38,6 +39,9 @@ export class InterestsService {
       await tx.delete(userInterests).where(eq(userInterests.userId, userId));
       await tx.insert(userInterests).values(topicIds.map((topicId) => ({ userId, topicId })));
     });
-    return [...topicIds].sort((a, b) => a - b);
+    const { xpAwarded } = await new XpEngine(this.db).award(userId, [
+      { type: 'interests_selected', key: 'interests_selected', silentIfPaid: true },
+    ]);
+    return { topicIds: [...topicIds].sort((a, b) => a - b), xpAwarded };
   }
 }

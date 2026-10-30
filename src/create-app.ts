@@ -20,6 +20,7 @@ import { meRoutes } from './modules/me/routes.js';
 import { interestsRoutes } from './modules/interests/routes.js';
 import { profileRoutes } from './modules/profile/routes.js';
 import { commentsRoutes } from './modules/comments/routes.js';
+import { xpRoutes } from './modules/xp/routes.js';
 
 export interface AppDeps {
   config: Config;
@@ -71,6 +72,7 @@ export async function buildApp(deps: AppDeps, opts: BuildOptions = {}): Promise<
   await app.register(meRoutes, { prefix: '/api/v1/me', deps });
   await app.register(profileRoutes, { prefix: '/api/v1/me', deps });
   await app.register(commentsRoutes, { prefix: '/api/v1', deps, limiter });
+  await app.register(xpRoutes, { prefix: '/api/v1', deps, limiter });
   await app.register(interestsRoutes, { prefix: '/api/v1', deps });
 
   return app;

@@ -5,12 +5,14 @@ import {
   index,
   inet,
   integer,
+  jsonb,
   pgSchema,
   pgTable,
   primaryKey,
   smallint,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
 
@@ -145,4 +147,43 @@ export const commentLikes = pgTable(
     createdAt: timestamptz('created_at').notNull().defaultNow(),
   },
   (t) => [primaryKey({ columns: [t.commentId, t.userId] })],
+);
+
+/**
+ * Append-only XP ledger: totals, levels, streaks, badges and leaderboards are all derived from it.
+ * A row with amount 0 is activity that earned nothing (already rewarded, or over a daily cap) but still counts
+ * for tasks, streaks and badges. `idempotency_key` is set only on rows that earned XP, so a retry never pays twice.
+ */
+export const xpEvents = pgTable(
+  'xp_events',
+  {
+    id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => authUsers.id, { onDelete: 'cascade' }),
+    eventType: text('event_type').notNull(),
+    amount: integer('amount').notNull(),
+    refType: text('ref_type'),
+    refId: text('ref_id'),
+    idempotencyKey: text('idempotency_key'),
+    metadata: jsonb('metadata'),
+    createdAt: timestamptz('created_at').notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('xp_events_user_key_uidx').on(t.userId, t.idempotencyKey),
+    index('xp_events_user_created_idx').on(t.userId, t.createdAt),
+    index('xp_events_created_idx').on(t.createdAt),
+  ],
+);
+
+export const userBadges = pgTable(
+  'user_badges',
+  {
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => authUsers.id, { onDelete: 'cascade' }),
+    badgeId: text('badge_id').notNull(),
+    earnedAt: timestamptz('earned_at').notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.badgeId] })],
 );

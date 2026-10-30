@@ -45,8 +45,8 @@ describe('/me/interests', () => {
   });
 
   it('replaces the selection and returns sorted ids', async () => {
-    expect((await put([5, 1, 3])).json()).toEqual({ topicIds: [1, 3, 5] });
-    expect((await put([2])).json()).toEqual({ topicIds: [2] });
+    expect((await put([5, 1, 3])).json()).toEqual({ topicIds: [1, 3, 5], xpAwarded: 5 });
+    expect((await put([2])).json()).toEqual({ topicIds: [2], xpAwarded: 0 });
     expect((await get()).json()).toEqual({ topicIds: [2] });
   });
 

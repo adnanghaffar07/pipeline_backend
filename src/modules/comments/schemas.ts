@@ -43,7 +43,7 @@ export const commentList = z.object({
 
 export const createdComment = z.object({
   comment: commentView,
-  /** Always 0 until the XP module ships (magazine comment +3, reply +2). */
+  /** XP earned by this post: +3 for a comment, +2 for a reply, 0 once today's cap (5 each) is reached. */
   xpAwarded: z.number().int(),
 });
 

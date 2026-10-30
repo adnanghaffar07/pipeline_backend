@@ -6,6 +6,7 @@ import type { AuthSession } from '../../integrations/auth-provider.js';
 import { AppError } from '../../lib/errors.js';
 import { toE164 } from '../../lib/phone.js';
 import { toUserView } from '../me/view.js';
+import { xpTotal } from '../xp/engine.js';
 import type { ChallengeInfo, OtpService } from './otp.js';
 import type { registerBody, tokenResponse } from './schemas.js';
 
@@ -28,13 +29,13 @@ export class AuthService {
     return p;
   }
 
-  private tokens(session: AuthSession, profile: Profile, isNewUser: boolean): TokenResponse {
+  private async tokens(session: AuthSession, profile: Profile, isNewUser: boolean): Promise<TokenResponse> {
     return {
       accessToken: session.accessToken,
       refreshToken: session.refreshToken,
       expiresIn: session.expiresIn,
       isNewUser,
-      user: toUserView(profile),
+      user: toUserView(profile, await xpTotal(this.deps.db, profile.id)),
     };
   }
 
@@ -89,7 +90,7 @@ export class AuthService {
     }
 
     if (!config.loginOtpRequired) {
-      return { otpRequired: false as const, ...this.tokens(session, profile, false) };
+      return { otpRequired: false as const, ...(await this.tokens(session, profile, false)) };
     }
     // The password check produced a full session; discard it so only a verified code yields tokens.
     await auth.revokeSession(session.accessToken);
