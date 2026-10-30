@@ -25,6 +25,7 @@ export type ProfileStatus = 'pending' | 'active';
 export type OtpPurpose = 'signup' | 'login' | 'password_reset';
 export type OtpChannel = 'email' | 'sms';
 export type ThemePreference = 'light' | 'dark' | 'system';
+export type ProfileRole = 'member' | 'admin';
 
 export const profiles = pgTable('profiles', {
   id: uuid('id')
@@ -52,6 +53,11 @@ export const profiles = pgTable('profiles', {
   shareContactEnabled: boolean('share_contact_enabled').notNull().default(false),
   shareEmail: boolean('share_email').notNull().default(false),
   sharePhone: boolean('share_phone').notNull().default(false),
+  /** IANA time zone (e.g. Asia/Karachi) for streak days and daily tasks; null = UTC. */
+  timezone: text('timezone'),
+  showOnLeaderboard: boolean('show_on_leaderboard').notNull().default(true),
+  /** `admin` unlocks /admin endpoints. Set by hand in the database. */
+  role: text('role').$type<ProfileRole>().notNull().default('member'),
   status: text('status').$type<ProfileStatus>().notNull(),
   termsAcceptedAt: timestamptz('terms_accepted_at'),
   termsVersion: text('terms_version'),
@@ -187,3 +193,14 @@ export const userBadges = pgTable(
   },
   (t) => [primaryKey({ columns: [t.userId, t.badgeId] })],
 );
+
+/** Runtime settings an admin can change without a release (e.g. key "xp" = XP rule overrides). */
+export const appSettings = pgTable('app_settings', {
+  key: text('key').primaryKey(),
+  value: jsonb('value').notNull(),
+  updatedBy: uuid('updated_by').references(() => authUsers.id, { onDelete: 'set null' }),
+  updatedAt: timestamptz('updated_at')
+    .notNull()
+    .defaultNow()
+    .$onUpdate(() => new Date()),
+});

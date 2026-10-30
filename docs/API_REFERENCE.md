@@ -144,6 +144,10 @@
 | 3.37 | GET | `/api/v1/me/badges/next` | Bearer | 200 |
 | 3.38 | GET | `/api/v1/leaderboard` | Bearer | 200 |
 | 3.39 | GET | `/api/v1/xp/rules` | — | 200 |
+| 3.40 | GET | `/api/v1/admin/xp/config` | Admin | 200 |
+| 3.41 | PUT | `/api/v1/admin/xp/config` | Admin | 200 |
+| 3.42 | GET | `/api/v1/admin/xp/events` | Admin | 200 |
+| 3.43 | POST | `/api/v1/admin/xp/reversals` | Admin | 201 |
 
 ---
 
@@ -638,21 +642,26 @@ Each upload gets a new URL and the old photo is deleted, so caching images by UR
 {
   "notificationsEnabled": true,
   "themePreference": "system",
+  "timezone": null,
+  "showOnLeaderboard": true,
   "contactSharing": { "enabled": false, "email": false, "phone": false }
 }
 ```
 
-`themePreference` is `light`, `dark` or `system`. Show `system` as **Default** in the Appearance Mode card. New accounts start with notifications on, theme `system` and contact sharing off.
+`themePreference` is `light`, `dark` or `system`. Show `system` as **Default** in the Appearance Mode card. New accounts start with notifications on, theme `system`, time zone `null` (UTC), shown on the leaderboard, and contact sharing off.
 
 ---
 
 ### 3.21 Update settings — `PATCH /api/v1/me/settings` 🔒
 
-Send one or both fields.
+Send any of the fields.
 
 ```json
-{ "notificationsEnabled": false, "themePreference": "dark" }
+{ "notificationsEnabled": false, "themePreference": "dark", "timezone": "Asia/Karachi", "showOnLeaderboard": true }
 ```
+
+- `timezone`: the device's IANA zone (e.g. `Asia/Karachi`, `America/New_York`). **Send it once after sign-in** and whenever the device zone changes, so streak days and today's tasks roll over at the user's own midnight. `null` = UTC. An unknown zone returns `422`.
+- `showOnLeaderboard`: `false` hides the user from every leaderboard. They also lose their own rank (see 3.38).
 
 **Response `200`:** the full settings object (same as 3.20).
 
@@ -757,7 +766,7 @@ No body. Both are safe to repeat, and both return the new state:
 
 ## Tech XP
 
-The server owns all XP. The app reports what the user did with `POST /events`, and the server decides what it's worth. Every award is paid once, so a retry, double tap or offline replay never pays twice. Days, weeks and months use **UTC**, and weeks start on Monday.
+The server owns all XP. The app reports what the user did with `POST /events`, and the server decides what it's worth. Every award is paid once, so a retry, double tap or offline replay never pays twice. **Streak days, today's tasks and daily caps** follow the user's time zone (the `timezone` setting, 3.21; UTC if unset). **Weekly and monthly** XP totals and leaderboards use UTC so everyone is ranked on the same clock, and weeks start on Monday.
 
 ### XP values (`GET /api/v1/xp/rules`, public)
 
@@ -776,8 +785,8 @@ Load XP chips and level names from this endpoint instead of hard-coding them.
 | Listen to a podcast | 3 | at least 70% listened, once |
 | Download a report | 5 | once per report |
 | Save content | 1 | once per item |
-| Comment / reply | 3 / 2 | first 5 a day each |
-| Comment received a like | 1 | once per liker, first 10 a day, never self-likes |
+| Comment / reply | 3 / 2 | first 5 a day each; at least 10 characters to earn XP (shorter ones still post) |
+| Comment received a like | 1 | once per liker, first 10 a day, never self-likes, at most 5 an hour from the same liker |
 | Add job role / company | 5 each | once |
 | Add expertise areas | 10 | once |
 | Complete profile (100%) | 10 | once |
@@ -868,12 +877,12 @@ Everything the Progress screen needs in one call:
 
 ### 3.33 History — `GET /api/v1/me/history` 🔒
 
-Every XP award, newest first, using the same `limit` and `cursor` paging as comments. Items: `{ id, type, label, xp, refType, refId, createdAt }`. Load titles from the content API using `refType` and `refId`.
+Every XP change, newest first, using the same `limit` and `cursor` paging as comments. Items: `{ id, type, label, xp, refType, refId, reason, createdAt }`. Load titles from the content API using `refType` and `refId`. An admin correction shows as `type: "reversal"`, label "XP adjustment", a **negative** `xp` and the admin's `reason`.
 
 ### 3.34 Streak calendar — `GET /api/v1/me/streak?year=2026&month=10` 🔒
 
 ```json
-{ "current": 5, "longest": 12, "year": 2026, "month": 10, "activeDates": ["2026-10-01", "2026-10-02"] }
+{ "current": 5, "longest": 12, "year": 2026, "month": 10, "timezone": "Asia/Karachi", "activeDates": ["2026-10-01", "2026-10-02"] }
 ```
 
 Without `year` and `month` it returns the current month. Put a flame on each `activeDates` day.
@@ -888,6 +897,7 @@ Same shape as `dailyTasks` in 3.31.
 {
   "items": [{
     "id": "reader", "name": "Reader", "description": "Read 50 articles", "group": "reading",
+    "iconUrl": null,
     "earned": false, "earnedAt": null,
     "requirements": [{ "label": "Read 50 articles", "current": 14, "target": 50, "unit": "articles", "percent": 28, "complete": false }],
     "completedCount": 0, "totalCount": 1
@@ -896,7 +906,7 @@ Same shape as `dailyTasks` in 3.31.
 }
 ```
 
-`/me/badges/next` returns the single unearned badge closest to completion (same object), or `null` when everything is earned. There are 13 badges in 4 groups: reading, webinars, podcasts and community.
+`/me/badges/next` returns the single unearned badge closest to completion (same object), or `null` when everything is earned. There are 13 badges in 4 groups: reading, webinars, podcasts and community. `iconUrl` is `null` until hosted artwork is set; until then bundle an icon per badge `id` in the app.
 
 ### 3.38 Leaderboard — `GET /api/v1/leaderboard?period=weekly&limit=50` 🔒
 
@@ -906,11 +916,61 @@ Same shape as `dailyTasks` in 3.31.
 {
   "period": "weekly",
   "items": [{ "rank": 1, "userId": "04bb34bb-…", "name": "Ayesha Munir", "initials": "AM", "avatarUrl": null, "xp": 120, "crown": "gold", "isMe": true }],
-  "me": { "rank": 1, "xp": 120, "xpThisWeek": 120 }
+  "me": { "rank": 1, "xp": 120, "xpThisWeek": 120, "hidden": false }
 }
 ```
 
-`crown` is `gold`, `silver` or `bronze` for the top 3, otherwise `null`. `me` is always returned, even when the user is outside the top `limit`. `me.rank` is `null` when the user has no XP in the period. On a tie, whoever reached the score first ranks higher.
+- `crown` is `gold`, `silver` or `bronze` for the top 3, otherwise `null`. On a tie, whoever reached the score first ranks higher.
+- `me` is always returned, even when the user is outside the top `limit`. `me.rank` is `null` when the user has no XP in the period.
+- `me.hidden: true` means the user turned off `showOnLeaderboard`. Nobody sees them and they have no rank; show "You're hidden from the leaderboard" with a link to Settings.
+- Names follow an admin setting: full names (default) or first name plus initial ("Ayesha M."). The user always sees their own full name.
+
+---
+
+## Admin (XP)
+
+For the Pipeline team, not the mobile app. Admin endpoints need a signed-in user whose profile has `role = 'admin'`; anyone else gets `403 FORBIDDEN`. Make someone an admin in Supabase → SQL editor:
+
+```sql
+update profiles set role = 'admin' where email = 'someone@pipelinepub.com';
+```
+
+### 3.40 / 3.41 XP settings — `GET` / `PUT /api/v1/admin/xp/config`
+
+Change XP values without a release. `GET` returns `{ "override": {...} | null, "effective": {...} }`, where `effective` is the full rule set in force. `PUT` **replaces** the whole override: send everything that should differ from the defaults, or `{}` to go back to the defaults. All keys are optional:
+
+```json
+{
+  "rules": { "article_read": { "xp": 2 }, "comment": { "dailyCap": 10 } },
+  "levels": [{ "name": "Explorer", "minXp": 0 }, { "name": "Enthusiast", "minXp": 101 }],
+  "streakBonuses": [{ "days": 7, "xp": 10 }, { "days": 30, "xp": 50 }],
+  "dailyTasks": { "watch_video": { "xp": 5 } },
+  "badges": { "webinar_explorer": { "target": 3, "iconUrl": "https://cdn.example.com/badges/webinar-explorer.png" } },
+  "read": { "minSeconds": 45, "minScrollPercent": 80 },
+  "media": { "webinarAttendPercent": 80, "webinarCompletePercent": 95, "podcastPercent": 70, "videoPercent": 80 },
+  "community": { "minCommentLengthForXp": 10, "maxLikeXpPerLikerPerAuthorPerHour": 5 },
+  "leaderboard": { "nameStyle": "first_initial" }
+}
+```
+
+- `dailyCap: null` removes a cap.
+- `levels` replaces the whole list: it must start at 0 XP and go up; numbers are assigned in order.
+- Unknown keys, event types, task ids or badge ids return `422`.
+- Changes reach every server within 30 seconds. They apply to new awards only; past XP is never recalculated.
+
+### 3.42 XP events — `GET /api/v1/admin/xp/events?userId=<uuid>&limit=20&cursor=…`
+
+Every XP change (all users, or one with `userId`), newest first, as in 3.33 plus `userId`. Use it to find the `id` of an award to reverse.
+
+### 3.43 Reverse an award — `POST /api/v1/admin/xp/reversals`
+
+```json
+{ "eventId": "9d1c…", "reason": "Scripted reads from one device" }
+```
+
+**Response `201`:** `{ "reversalId": "…", "userId": "…", "xpRemoved": 5, "xpTotal": 62 }`
+
+Adds a negative entry that cancels the award (the original stays for the audit trail). The reversed activity stops counting towards badge progress; badges already earned are kept. Errors: `404 NOT_FOUND` (no such award, or a 0-XP or reversal row), `409 ALREADY_REVERSED`.
 
 ---
 
@@ -933,6 +993,7 @@ Same shape as `dailyTasks` in 3.31.
 | 409 | `EMAIL_TAKEN` | Email already registered |
 | 409 | `OTP_ALREADY_USED` | Code already used |
 | 409 | `DUPLICATE_COMMENT` | Same comment posted in the last 5 minutes |
+| 409 | `ALREADY_REVERSED` | That XP award was already reversed (admin) |
 | 410 | `OTP_EXPIRED` | Code expired |
 | 413 | `PAYLOAD_TOO_LARGE` | Body over 100 KB |
 | 415 | `UNSUPPORTED_MEDIA_TYPE` | Missing/wrong `Content-Type` |

@@ -6,7 +6,7 @@ import type { AuthSession } from '../../integrations/auth-provider.js';
 import { AppError } from '../../lib/errors.js';
 import { toE164 } from '../../lib/phone.js';
 import { toUserView } from '../me/view.js';
-import { xpTotal } from '../xp/engine.js';
+import { userXp } from '../xp/engine.js';
 import type { ChallengeInfo, OtpService } from './otp.js';
 import type { registerBody, tokenResponse } from './schemas.js';
 
@@ -35,7 +35,7 @@ export class AuthService {
       refreshToken: session.refreshToken,
       expiresIn: session.expiresIn,
       isNewUser,
-      user: toUserView(profile, await xpTotal(this.deps.db, profile.id)),
+      user: toUserView(profile, await userXp(this.deps.db, profile.id)),
     };
   }
 

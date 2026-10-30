@@ -71,6 +71,8 @@ export const badgeView = z.object({
   name: z.string(),
   description: z.string(),
   group: z.string(),
+  /** null until hosted artwork is set; show the app's own icon for `id`. */
+  iconUrl: z.string().nullable(),
   earned: z.boolean(),
   earnedAt: z.string().nullable(),
   requirements: z.array(requirementView),
@@ -126,6 +128,8 @@ export const historyResponse = z.object({
       xp: z.number().int(),
       refType: z.string().nullable(),
       refId: z.string().nullable(),
+      /** Set on admin XP adjustments (negative `xp`). */
+      reason: z.string().nullable(),
       createdAt: z.string(),
     }),
   ),
@@ -142,6 +146,8 @@ export const streakResponse = z.object({
   longest: z.number().int(),
   year: z.number().int(),
   month: z.number().int(),
+  /** The time zone the days are counted in (the user's setting, or UTC). */
+  timezone: z.string(),
   activeDates: z.array(z.string()),
 });
 
@@ -163,7 +169,8 @@ export const leaderboardResponse = z.object({
       isMe: z.boolean(),
     }),
   ),
-  me: z.object({ rank: z.number().int().nullable(), xp: z.number().int(), xpThisWeek: z.number().int() }),
+  /** `hidden` = the user opted out, so they have no rank and others don't see them. */
+  me: z.object({ rank: z.number().int().nullable(), xp: z.number().int(), xpThisWeek: z.number().int(), hidden: z.boolean() }),
 });
 
 export const rulesResponse = z.object({
@@ -171,4 +178,53 @@ export const rulesResponse = z.object({
   levels: z.array(z.object({ number: z.number().int(), name: z.string(), minXp: z.number().int() })),
   streakBonuses: z.array(z.object({ days: z.number().int(), xp: z.number().int() })),
   dailyTasks: z.array(z.object({ id: z.string(), label: z.string(), xp: z.number().int() })),
+  thresholds: z.object({
+    read: z.object({ minSeconds: z.number().int(), minScrollPercent: z.number().int() }),
+    media: z.object({
+      webinarAttendPercent: z.number().int(),
+      webinarCompletePercent: z.number().int(),
+      podcastPercent: z.number().int(),
+      videoPercent: z.number().int(),
+    }),
+    community: z.object({ minCommentLengthForXp: z.number().int(), maxLikeXpPerLikerPerAuthorPerHour: z.number().int() }),
+  }),
+});
+
+// ---- Admin ----------------------------------------------------------------------------------------------------
+
+export const adminConfigResponse = z.object({
+  /** What the admin has changed (null = all defaults). */
+  override: z.record(z.string(), z.unknown()).nullable(),
+  /** The full rule set in force: defaults merged with the override. */
+  effective: z.record(z.string(), z.unknown()),
+});
+
+export const adminEventsQuery = historyQuery.extend({ userId: z.uuid().optional() });
+export const adminEventsResponse = z.object({
+  items: z.array(
+    z.object({
+      id: z.string(),
+      userId: z.string(),
+      type: z.string(),
+      label: z.string(),
+      xp: z.number().int(),
+      refType: z.string().nullable(),
+      refId: z.string().nullable(),
+      reason: z.string().nullable(),
+      createdAt: z.string(),
+    }),
+  ),
+  nextCursor: z.string().nullable(),
+  total: z.number().int(),
+});
+
+export const reversalBody = z.object({
+  eventId: z.uuid(),
+  reason: z.string().trim().min(3, 'Say why (at least 3 characters)').max(500),
+});
+export const reversalResponse = z.object({
+  reversalId: z.string(),
+  userId: z.string(),
+  xpRemoved: z.number().int(),
+  xpTotal: z.number().int(),
 });

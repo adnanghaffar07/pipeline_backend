@@ -118,7 +118,7 @@ describe('XP from other modules', () => {
     const xp: number[] = [];
     let firstId = '';
     for (let i = 0; i < 6; i++) {
-      const r = await t.app.inject({ method: 'POST', url: '/api/v1/articles/art-xp/comments', headers: auth(author), payload: { text: `c${i}` } });
+      const r = await t.app.inject({ method: 'POST', url: '/api/v1/articles/art-xp/comments', headers: auth(author), payload: { text: `Comment number ${i} on this piece` } });
       xp.push(r.json().xpAwarded);
       firstId ||= r.json().comment.id;
     }
@@ -133,7 +133,7 @@ describe('XP from other modules', () => {
     await like(fan); // same liker again: nothing
     expect((await get(author, '/me')).json().xpTotal).toBe(totalBefore + 1);
 
-    const reply = await t.app.inject({ method: 'POST', url: `/api/v1/comments/${firstId}/replies`, headers: auth(fan), payload: { text: 'r' } });
+    const reply = await t.app.inject({ method: 'POST', url: `/api/v1/comments/${firstId}/replies`, headers: auth(fan), payload: { text: 'A thoughtful reply' } });
     expect(reply.json().xpAwarded).toBe(2);
   });
 
@@ -167,7 +167,7 @@ describe('progress reads', () => {
   it('summarises progress, XP, history, tasks and badges', async () => {
     const u = await signUp(t);
     await read(u, 'p1');
-    await t.app.inject({ method: 'POST', url: '/api/v1/articles/p1/comments', headers: auth(u), payload: { text: 'hello' } });
+    await t.app.inject({ method: 'POST', url: '/api/v1/articles/p1/comments', headers: auth(u), payload: { text: 'Hello there, great piece' } });
 
     const p = (await get(u, '/me/progress')).json();
     expect(p).toMatchObject({
@@ -220,7 +220,7 @@ describe('progress reads', () => {
     expect(l.me).toMatchObject({ rank: mine.rank, xp: 900, xpThisWeek: 900 });
 
     const nobody = (await get(c, '/leaderboard')).json();
-    expect(nobody.me).toEqual({ rank: null, xp: 0, xpThisWeek: 0 });
+    expect(nobody.me).toEqual({ rank: null, xp: 0, xpThisWeek: 0, hidden: false });
   });
 
   it('serves the rule catalogue without a token', async () => {

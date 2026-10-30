@@ -56,6 +56,8 @@ function toSettingsView(p: Profile): z.infer<typeof settingsResponse> {
   return {
     notificationsEnabled: p.notificationsEnabled,
     themePreference: p.themePreference,
+    timezone: p.timezone,
+    showOnLeaderboard: p.showOnLeaderboard,
     contactSharing: { enabled: p.shareContactEnabled, email: p.shareEmail, phone: p.sharePhone },
   };
 }

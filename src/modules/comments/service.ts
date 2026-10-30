@@ -7,6 +7,7 @@ import { AppError } from '../../lib/errors.js';
 import { decodeCursor, encodeCursor, listEnvelope } from '../../lib/pagination.js';
 import type { commentView } from './schemas.js';
 import { XpEngine } from '../xp/engine.js';
+import { getXpConfig } from '../xp/config.js';
 
 type CommentView = z.infer<typeof commentView>;
 
@@ -194,7 +195,7 @@ export class CommentsService {
       .values({ targetType: 'article', targetId: articleId, userId: me, text })
       .returning({ id: comments.id });
     const { xpAwarded } = await this.xp.award(me, [
-      { type: 'comment', refType: 'article', refId: articleId, key: `comment:${row!.id}` },
+      { type: 'comment', refType: 'article', refId: articleId, key: `comment:${row!.id}`, zeroXp: await this.tooShortForXp(text) },
     ]);
     return { comment: await this.view(me, row!.id), xpAwarded };
   }
@@ -210,9 +211,26 @@ export class CommentsService {
       .values({ targetType: target.targetType, targetId: target.targetId, parentId, userId: me, text })
       .returning({ id: comments.id });
     const { xpAwarded } = await this.xp.award(me, [
-      { type: 'reply', refType: target.targetType, refId: target.targetId, key: `reply:${row!.id}` },
+      { type: 'reply', refType: target.targetType, refId: target.targetId, key: `reply:${row!.id}`, zeroXp: await this.tooShortForXp(text) },
     ]);
     return { comment: await this.view(me, row!.id), xpAwarded };
+  }
+
+  /** Short comments still post, but earn no XP (requirements 8.7: minimum length). */
+  private async tooShortForXp(text: string) {
+    return text.length < (await getXpConfig(this.db)).community.minCommentLengthForXp;
+  }
+
+  /** One person liking many of the same author's comments within an hour pays the author nothing more. */
+  private async isLikeBurst(liker: string, author: string) {
+    const max = (await getXpConfig(this.db)).community.maxLikeXpPerLikerPerAuthorPerHour;
+    const [r] = await this.db
+      .select({ n: sql<number>`count(*)`.mapWith(Number) })
+      .from(commentLikes)
+      .innerJoin(comments, eq(comments.id, commentLikes.commentId))
+      .where(and(eq(commentLikes.userId, liker), eq(comments.userId, author), sql`${commentLikes.createdAt} > now() - interval '1 hour'`));
+    // The like just inserted is included in the count.
+    return (r?.n ?? 0) > max;
   }
 
   async remove(me: string, commentId: string) {
@@ -241,7 +259,7 @@ export class CommentsService {
       .onConflictDoNothing()
       .returning({ userId: commentLikes.userId });
     // The author earns +1 per distinct liker (never for self-likes, capped daily); unlike + like again pays nothing more.
-    if (added.length > 0 && row.userId !== me) {
+    if (added.length > 0 && row.userId !== me && !(await this.isLikeBurst(me, row.userId))) {
       await this.xp.award(row.userId, [
         { type: 'like_received', refType: 'comment', refId: row.id, key: `like:${row.id}:${me}`, silentIfPaid: true },
       ]);

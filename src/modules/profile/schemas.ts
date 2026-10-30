@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isValidTimeZone } from '../xp/engine.js';
 
 /** Empty strings and null both mean "clear this field". */
 const clearable = <T extends z.ZodType>(schema: T) =>
@@ -93,6 +94,9 @@ export const contactSharing = z.object({
 export const settingsResponse = z.object({
   notificationsEnabled: z.boolean(),
   themePreference: z.enum(['light', 'dark', 'system']),
+  /** IANA zone such as "Asia/Karachi"; null = UTC. Streak days and daily tasks follow it. */
+  timezone: z.string().nullable(),
+  showOnLeaderboard: z.boolean(),
   contactSharing,
 });
 
@@ -100,6 +104,13 @@ export const settingsPatchBody = z
   .object({
     notificationsEnabled: z.boolean(),
     themePreference: z.enum(['light', 'dark', 'system']),
+    timezone: z
+      .string()
+      .trim()
+      .max(64)
+      .refine(isValidTimeZone, 'Unknown time zone (use an IANA name such as Asia/Karachi)')
+      .nullable(),
+    showOnLeaderboard: z.boolean(),
   })
   .partial()
   .refine((b) => Object.keys(b).length > 0, 'Send at least one setting to update');

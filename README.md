@@ -16,7 +16,8 @@ Supabase (Postgres + Auth), Resend for email.
 | Interests | `GET /interests/topics`, `GET /me/interests`, `PUT /me/interests` |
 | Profile and settings | `GET/PATCH /me/profile`, `POST/DELETE /me/avatar`, `GET/PATCH /me/settings`, `PUT /me/privacy/contact-sharing` |
 | Comments | `GET/POST /articles/{articleId}/comments`, `GET/POST /comments/{id}/replies`, `DELETE /comments/{id}`, `POST/DELETE /comments/{id}/like` |
-| Tech XP | `POST /events`, `GET /me/progress`, `/me/xp`, `/me/history`, `/me/streak`, `/me/tasks`, `/badges`, `/me/badges/next`, `/leaderboard`, `/xp/rules` (rules live in `src/modules/xp/config.ts`) |
+| Tech XP | `POST /events`, `GET /me/progress`, `/me/xp`, `/me/history`, `/me/streak`, `/me/tasks`, `/badges`, `/me/badges/next`, `/leaderboard`, `/xp/rules` (defaults in `src/modules/xp/config.ts`, overridable at runtime) |
+| Admin | `GET/PUT /admin/xp/config`, `GET /admin/xp/events`, `POST /admin/xp/reversals` — needs `profiles.role = 'admin'` (set it in the SQL editor) |
 | Ops | `GET /health/live`, `GET /health/ready` (unversioned) |
 
 ### How sign-in works

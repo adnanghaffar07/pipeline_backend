@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import type { profiles } from '../../db/schema.js';
-import { levelFor } from '../xp/config.js';
 
 export const userViewSchema = z.object({
   id: z.string(),
@@ -15,15 +14,17 @@ export const userViewSchema = z.object({
 export type UserView = z.infer<typeof userViewSchema>;
 
 /** Subscription is a fixed default until the subscription module exists. */
-export function toUserView(p: typeof profiles.$inferSelect, xpTotal: number): UserView {
-  const level = levelFor(xpTotal);
+export function toUserView(
+  p: typeof profiles.$inferSelect,
+  xp: { xpTotal: number; level: { number: number; name: string } },
+): UserView {
   return {
     id: p.id,
     fullName: p.fullName,
     email: p.email,
     avatarUrl: p.avatarUrl,
-    xpTotal,
-    level: { number: level.number, name: level.name },
+    xpTotal: xp.xpTotal,
+    level: xp.level,
     subscription: { status: 'free' },
   };
 }

@@ -1,17 +1,7 @@
-import { and, eq, gte, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { Db } from '../../db/client.js';
-import { userBadges, xpEvents } from '../../db/schema.js';
-import {
-  BADGES,
-  DAILY_TASKS,
-  LEARNING_TYPES,
-  STREAK_BONUSES,
-  XP_RULES,
-  levelFor,
-  type BadgeMetric,
-  type XpEventType,
-  type XpRule,
-} from './config.js';
+import { profiles, userBadges, xpEvents } from '../../db/schema.js';
+import { LEARNING_TYPES, getXpConfig, levelFor, type BadgeMetric, type XpConfig, type XpEventType } from './config.js';
 
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
 type Conn = Db | Tx;
@@ -25,6 +15,8 @@ export interface AwardInput {
   metadata?: Record<string, unknown>;
   /** Profile-style awards: once the key has paid, later calls log nothing at all. */
   silentIfPaid?: boolean;
+  /** Log the activity (it still counts for badges and tasks) but pay nothing, e.g. a too-short comment. */
+  zeroXp?: boolean;
 }
 
 export interface AwardResult {
@@ -38,11 +30,35 @@ export interface AwardResult {
 }
 
 const DAY_MS = 864e5;
+export const UTC = 'UTC';
 
-/** UTC calendar day as YYYY-MM-DD. */
+/** Calendar day (YYYY-MM-DD) of `d` in an IANA time zone. */
+export function localDay(d: Date, tz: string = UTC): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+}
+
+export function isValidTimeZone(tz: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export const utcDay = (d: Date) => d.toISOString().slice(0, 10);
 export const startOfUtcDay = (d: Date) => new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
 const addDays = (day: string, n: number) => utcDay(new Date(Date.parse(day) + n * DAY_MS));
+
+/** The ledger row's own id, table-qualified (Drizzle drops the table name in single-table queries). */
+const rowId = sql.raw('"xp_events"."id"');
+/** Rows an admin reversed don't count towards badges. */
+const notReversed = sql`not exists (select 1 from ${xpEvents} rv where rv.event_type = 'reversal' and rv.ref_id = ${rowId}::text)`;
+
+export async function userTimeZone(db: Conn, userId: string): Promise<string> {
+  const [p] = await db.select({ tz: profiles.timezone }).from(profiles).where(eq(profiles.id, userId));
+  return p?.tz && isValidTimeZone(p.tz) ? p.tz : UTC;
+}
 
 export async function xpTotal(db: Conn, userId: string): Promise<number> {
   const [row] = await db
@@ -52,10 +68,18 @@ export async function xpTotal(db: Conn, userId: string): Promise<number> {
   return row?.n ?? 0;
 }
 
-/** Distinct UTC days with learning activity, newest first. */
-export async function learningDays(db: Conn, userId: string): Promise<string[]> {
+/** XP total and level for the user object in /me and the sign-in responses. */
+export async function userXp(db: Db, userId: string) {
+  const [total, config] = await Promise.all([xpTotal(db, userId), getXpConfig(db)]);
+  const level = levelFor(total, config.levels);
+  return { xpTotal: total, level: { number: level.number, name: level.name } };
+}
+
+/** Distinct days (in the user's time zone) with learning activity, newest first. */
+export async function learningDays(db: Conn, userId: string, tz: string): Promise<string[]> {
+  const day = sql<string>`((${xpEvents.createdAt} at time zone ${tz})::date)::text`;
   const rows = await db
-    .selectDistinct({ d: sql<string>`((${xpEvents.createdAt} at time zone 'utc')::date)::text` })
+    .selectDistinct({ d: day })
     .from(xpEvents)
     .where(and(eq(xpEvents.userId, userId), inArray(xpEvents.eventType, LEARNING_TYPES)))
     .orderBy(sql`1 desc`);
@@ -87,7 +111,7 @@ export async function badgeMetrics(db: Conn, userId: string, longestStreak: numb
       comments: sql<number>`count(*) filter (where ${xpEvents.eventType} in ('comment', 'reply'))`.mapWith(Number),
     })
     .from(xpEvents)
-    .where(eq(xpEvents.userId, userId));
+    .where(and(eq(xpEvents.userId, userId), notReversed));
   return {
     articles_read: m?.articles ?? 0,
     webinars_attended: m?.webinars ?? 0,
@@ -105,37 +129,23 @@ export class XpEngine {
   ) {}
 
   async award(userId: string, inputs: AwardInput[]): Promise<AwardResult> {
+    const config = await getXpConfig(this.db);
     return this.db.transaction(async (tx) => {
       // Serialises one user's awards, so daily caps and once-only keys can't be raced past with parallel requests.
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${userId}))`);
-      const now = this.now();
-      const today = utcDay(now);
-      const dayStart = startOfUtcDay(now);
+      const tz = await userTimeZone(tx, userId);
+      const today = localDay(this.now(), tz);
       const before = await xpTotal(tx, userId);
       const awards: AwardResult['awards'] = [];
       const logged = new Set<XpEventType>();
-
-      const insert = async (type: XpEventType, amount: number, input: Omit<AwardInput, 'type'>) => {
-        await tx.insert(xpEvents).values({
-          userId,
-          eventType: type,
-          amount,
-          refType: input.refType ?? null,
-          refId: input.refId ?? null,
-          idempotencyKey: amount > 0 ? (input.key ?? null) : null,
-          metadata: input.metadata ?? null,
-        });
-        logged.add(type);
-        if (amount > 0) awards.push({ type, label: XP_RULES[type].label, xp: amount });
-      };
 
       const alreadyPaid = async (key: string) =>
         (await tx.select({ id: xpEvents.id }).from(xpEvents).where(and(eq(xpEvents.userId, userId), eq(xpEvents.idempotencyKey, key))).limit(1))
           .length > 0;
 
       for (const input of inputs) {
-        const rule: XpRule = XP_RULES[input.type];
-        let amount = rule.xp;
+        const rule = config.rules[input.type];
+        let amount = input.zeroXp ? 0 : rule.xp;
         if (amount > 0 && input.key && (await alreadyPaid(input.key))) {
           if (input.silentIfPaid) continue;
           amount = 0;
@@ -144,55 +154,95 @@ export class XpEngine {
           const [c] = await tx
             .select({ n: sql<number>`count(*)`.mapWith(Number) })
             .from(xpEvents)
-            .where(and(eq(xpEvents.userId, userId), eq(xpEvents.eventType, input.type), gte(xpEvents.createdAt, dayStart), sql`${xpEvents.amount} > 0`));
+            .where(
+              and(
+                eq(xpEvents.userId, userId),
+                eq(xpEvents.eventType, input.type),
+                sql`${xpEvents.amount} > 0`,
+                sql`(${xpEvents.createdAt} at time zone ${tz})::date = ${today}::date`,
+              ),
+            );
           if ((c?.n ?? 0) >= rule.dailyCap) amount = 0;
         }
-        await insert(input.type, amount, input);
+        await tx.insert(xpEvents).values({
+          userId,
+          eventType: input.type,
+          amount,
+          refType: input.refType ?? null,
+          refId: input.refId ?? null,
+          idempotencyKey: amount > 0 ? (input.key ?? null) : null,
+          metadata: input.metadata ?? null,
+        });
+        logged.add(input.type);
+        if (amount > 0) awards.push({ type: input.type, label: rule.label, xp: amount });
       }
 
       // Bonuses ride on the activity just logged; their keys make each one pay once.
       const bonus = async (type: 'streak_bonus' | 'task_bonus', xp: number, key: string, label: string, metadata: Record<string, unknown>) => {
-        if (await alreadyPaid(key)) return;
+        if (xp <= 0 || (await alreadyPaid(key))) return;
         await tx.insert(xpEvents).values({ userId, eventType: type, amount: xp, idempotencyKey: key, metadata });
         awards.push({ type, label, xp });
       };
 
-      const days = await learningDays(tx, userId);
-      const streak = streakFrom(days, today);
+      const streak = streakFrom(await learningDays(tx, userId, tz), today);
       if (LEARNING_TYPES.some((t) => logged.has(t)) && streak.runStart) {
-        for (const b of STREAK_BONUSES) {
+        for (const b of config.streakBonuses) {
           if (streak.current >= b.days) {
             await bonus('streak_bonus', b.xp, `streak:${b.days}:${streak.runStart}`, `${b.days}-day streak`, { days: b.days });
           }
         }
       }
-      for (const task of DAILY_TASKS) {
+      for (const task of config.dailyTasks) {
         if (task.completedBy.some((t) => logged.has(t))) {
           await bonus('task_bonus', task.xp, `task:${task.id}:${today}`, task.label, { taskId: task.id });
         }
       }
 
       const after = await xpTotal(tx, userId);
-      const newBadges = await this.evaluateBadges(tx, userId, streak.longest);
-      const level = levelFor(after);
+      const newBadges = await this.evaluateBadges(tx, userId, streak.longest, config);
+      const level = levelFor(after, config.levels);
       return {
         awards,
         xpAwarded: after - before,
         xpTotal: after,
         level,
-        leveledUp: level.number > levelFor(before).number,
+        leveledUp: level.number > levelFor(before, config.levels).number,
         newBadges,
         streak: { current: streak.current, longest: streak.longest },
       };
     });
   }
 
-  private async evaluateBadges(tx: Tx, userId: string, longestStreak: number) {
+  /** Admin correction: a negative row that cancels one award. Each award can be reversed once. */
+  async reverse(eventId: string, reason: string, adminId: string) {
+    return this.db.transaction(async (tx) => {
+      const [ev] = await tx.select().from(xpEvents).where(eq(xpEvents.id, eventId));
+      if (!ev || ev.eventType === 'reversal' || ev.amount <= 0) return { status: 'not_reversible' as const };
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${ev.userId}))`);
+      const [row] = await tx
+        .insert(xpEvents)
+        .values({
+          userId: ev.userId,
+          eventType: 'reversal',
+          amount: -ev.amount,
+          refType: 'xp_event',
+          refId: ev.id,
+          idempotencyKey: `reversal:${ev.id}`,
+          metadata: { reason, adminId, reversedType: ev.eventType },
+        })
+        .onConflictDoNothing()
+        .returning();
+      if (!row) return { status: 'already_reversed' as const };
+      return { status: 'reversed' as const, reversal: row, userId: ev.userId, xpTotal: await xpTotal(tx, ev.userId) };
+    });
+  }
+
+  private async evaluateBadges(tx: Tx, userId: string, longestStreak: number, config: XpConfig) {
     const metrics = await badgeMetrics(tx, userId, longestStreak);
     const have = new Set(
       (await tx.select({ id: userBadges.badgeId }).from(userBadges).where(eq(userBadges.userId, userId))).map((r) => r.id),
     );
-    const earned = BADGES.filter((b) => !have.has(b.id) && b.requirements.every((r) => metrics[r.metric] >= r.target));
+    const earned = config.badges.filter((b) => !have.has(b.id) && b.requirements.every((r) => metrics[r.metric] >= r.target));
     if (earned.length > 0) {
       await tx
         .insert(userBadges)

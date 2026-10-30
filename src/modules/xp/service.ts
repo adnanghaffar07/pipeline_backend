@@ -5,29 +5,27 @@ import { profiles, userBadges, xpEvents } from '../../db/schema.js';
 import { AppError } from '../../lib/errors.js';
 import { decodeCursor, encodeCursor, listEnvelope } from '../../lib/pagination.js';
 import { completion } from '../profile/service.js';
+import { METRIC_UNITS, getXpConfig, levelFor, type BadgeDef, type XpConfig, type XpEventType } from './config.js';
 import {
-  BADGES,
-  DAILY_TASKS,
-  LEVELS,
-  MEDIA_RULES,
-  METRIC_UNITS,
-  READ_RULES,
-  STREAK_BONUSES,
-  XP_RULES,
-  levelFor,
-  type BadgeDef,
-  type XpEventType,
-  type XpRule,
-} from './config.js';
-import { XpEngine, badgeMetrics, learningDays, startOfUtcDay, streakFrom, utcDay, xpTotal, type AwardInput } from './engine.js';
+  XpEngine,
+  badgeMetrics,
+  learningDays,
+  localDay,
+  startOfUtcDay,
+  streakFrom,
+  userTimeZone,
+  utcDay,
+  xpTotal,
+  type AwardInput,
+} from './engine.js';
 import type { EventBody, badgeView } from './schemas.js';
 
 const DAY_MS = 864e5;
 type BadgeView = z.infer<typeof badgeView>;
 
-const labelOf = (type: string) => (XP_RULES as Record<string, XpRule>)[type]?.label ?? type;
+const labelOf = (config: XpConfig, type: string) => config.rules[type as XpEventType]?.label ?? type;
 
-/** Monday 00:00 UTC of the week containing `d`. */
+/** Monday 00:00 UTC of the week containing `d`. Weekly and monthly totals are UTC so leaderboards are global. */
 function startOfUtcWeek(d: Date) {
   const day = startOfUtcDay(d);
   return new Date(day.getTime() - ((day.getUTCDay() + 6) % 7) * DAY_MS);
@@ -37,6 +35,13 @@ const startOfUtcMonth = (d: Date) => new Date(Date.UTC(d.getUTCFullYear(), d.get
 function initials(name: string) {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   return ((parts[0]?.[0] ?? '') + (parts.length > 1 ? (parts.at(-1)?.[0] ?? '') : '')).toUpperCase() || '?';
+}
+
+/** "Ayesha Munir" → "Ayesha M." when the admin picks first-name-plus-initial for the leaderboard. */
+function displayName(name: string, style: XpConfig['leaderboard']['nameStyle']) {
+  if (style === 'full') return name;
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  return parts.length > 1 ? `${parts[0]} ${parts.at(-1)![0]!.toUpperCase()}.` : (parts[0] ?? name);
 }
 
 export class XpService {
@@ -53,14 +58,15 @@ export class XpService {
 
   /** Turns an app-reported activity into ledger entries, applying the integrity rules (requirements 8.7). */
   async recordEvent(userId: string, e: EventBody) {
+    const { read, media } = await getXpConfig(this.db);
     const inputs: AwardInput[] = [];
     let reason: string | null = null;
 
     switch (e.type) {
       case 'article_complete': {
         const { kind, secondsOnPage, scrollPercent } = e.metadata;
-        if (secondsOnPage < READ_RULES.minSeconds || scrollPercent < READ_RULES.minScrollPercent) {
-          reason = `Read for at least ${READ_RULES.minSeconds} seconds and scroll ${READ_RULES.minScrollPercent}% of the article`;
+        if (secondsOnPage < read.minSeconds || scrollPercent < read.minScrollPercent) {
+          reason = `Read for at least ${read.minSeconds} seconds and scroll ${read.minScrollPercent}% of the article`;
           break;
         }
         const type = kind === 'magazine' ? 'magazine_article_read' : kind === 'sponsored' ? 'sponsored_article_read' : 'article_read';
@@ -79,26 +85,26 @@ export class XpService {
         break;
       case 'webinar_progress': {
         const pct = e.metadata.watchedPercent;
-        if (pct < MEDIA_RULES.webinarAttendPercent) {
-          reason = `Watch at least ${MEDIA_RULES.webinarAttendPercent}% of the webinar`;
+        if (pct < media.webinarAttendPercent) {
+          reason = `Watch at least ${media.webinarAttendPercent}% of the webinar`;
           break;
         }
         inputs.push({ type: 'webinar_attend', refType: 'webinar', refId: e.refId, key: `webinar_attend:${e.refId}`, metadata: e.metadata });
-        if (pct >= MEDIA_RULES.webinarCompletePercent) {
+        if (pct >= media.webinarCompletePercent) {
           inputs.push({ type: 'webinar_complete', refType: 'webinar', refId: e.refId, key: `webinar_complete:${e.refId}`, metadata: e.metadata });
         }
         break;
       }
       case 'podcast_progress':
-        if (e.metadata.listenedPercent < MEDIA_RULES.podcastPercent) {
-          reason = `Listen to at least ${MEDIA_RULES.podcastPercent}% of the episode`;
+        if (e.metadata.listenedPercent < media.podcastPercent) {
+          reason = `Listen to at least ${media.podcastPercent}% of the episode`;
           break;
         }
         inputs.push({ type: 'podcast_listen', refType: 'podcast', refId: e.refId, key: `podcast:${e.refId}`, metadata: e.metadata });
         break;
       case 'video_progress':
-        if (e.metadata.watchedPercent < MEDIA_RULES.videoPercent) {
-          reason = `Watch at least ${MEDIA_RULES.videoPercent}% of the video`;
+        if (e.metadata.watchedPercent < media.videoPercent) {
+          reason = `Watch at least ${media.videoPercent}% of the video`;
           break;
         }
         inputs.push({ type: 'video_watch', refType: 'video', refId: e.refId, metadata: e.metadata });
@@ -121,18 +127,25 @@ export class XpService {
   // ---- Reads --------------------------------------------------------------------------------------------------
 
   async tasks(userId: string) {
-    const today = utcDay(this.now());
+    const [config, tz] = await Promise.all([getXpConfig(this.db), userTimeZone(this.db, userId)]);
+    const today = localDay(this.now(), tz);
     const rows = await this.db
       .select({ key: xpEvents.idempotencyKey })
       .from(xpEvents)
       .where(and(eq(xpEvents.userId, userId), eq(xpEvents.eventType, 'task_bonus'), sql`${xpEvents.idempotencyKey} like ${`task:%:${today}`}`));
     const done = new Set(rows.map((r) => r.key));
-    const items = DAILY_TASKS.map((t) => ({ id: t.id, label: t.label, xp: t.xp, done: done.has(`task:${t.id}:${today}`) }));
+    const items = config.dailyTasks.map((t) => ({ id: t.id, label: t.label, xp: t.xp, done: done.has(`task:${t.id}:${today}`) }));
     return { items, doneCount: items.filter((i) => i.done).length, totalCount: items.length };
   }
 
+  private async streakInfo(userId: string) {
+    const tz = await userTimeZone(this.db, userId);
+    const days = await learningDays(this.db, userId, tz);
+    return { tz, days, ...streakFrom(days, localDay(this.now(), tz)) };
+  }
+
   async badges(userId: string) {
-    const streak = streakFrom(await learningDays(this.db, userId), utcDay(this.now()));
+    const [config, streak] = await Promise.all([getXpConfig(this.db), this.streakInfo(userId)]);
     const metrics = await badgeMetrics(this.db, userId, streak.longest);
     const earned = new Map(
       (await this.db.select().from(userBadges).where(eq(userBadges.userId, userId))).map((r) => [r.badgeId, r.earnedAt]),
@@ -155,6 +168,7 @@ export class XpService {
         name: b.name,
         description: b.description,
         group: b.group,
+        iconUrl: b.iconUrl,
         earned: Boolean(at),
         earnedAt: at ? at.toISOString() : null,
         requirements,
@@ -162,7 +176,7 @@ export class XpService {
         totalCount: requirements.length,
       };
     };
-    const items = BADGES.map(view);
+    const items = config.badges.map(view);
     return { items, earnedCount: items.filter((b) => b.earned).length, totalCount: items.length };
   }
 
@@ -184,15 +198,15 @@ export class XpService {
 
   async progress(userId: string) {
     const now = this.now();
-    const [total, days, tasks, badges, xpThisWeek, [profile]] = await Promise.all([
+    const [config, total, streak, tasks, badges, xpThisWeek, [profile]] = await Promise.all([
+      getXpConfig(this.db),
       xpTotal(this.db, userId),
-      learningDays(this.db, userId),
+      this.streakInfo(userId),
       this.tasks(userId),
       this.badges(userId),
       this.sumSince(userId, startOfUtcWeek(now)),
       this.db.select().from(profiles).where(eq(profiles.id, userId)),
     ]);
-    const streak = streakFrom(days, utcDay(now));
     const metrics = await badgeMetrics(this.db, userId, streak.longest);
     const recentBadges = badges.items
       .filter((b) => b.earned)
@@ -200,7 +214,7 @@ export class XpService {
       .slice(0, 3);
     return {
       xpTotal: total,
-      level: levelFor(total),
+      level: levelFor(total, config.levels),
       streak: { current: streak.current, longest: streak.longest },
       stats: { xpThisWeek, articlesRead: metrics.articles_read, currentStreak: streak.current },
       dailyTasks: tasks,
@@ -212,6 +226,7 @@ export class XpService {
 
   async xpSummary(userId: string, period: 'week' | 'month') {
     const now = this.now();
+    const config = await getXpConfig(this.db);
     const from = period === 'week' ? startOfUtcWeek(now) : startOfUtcMonth(now);
     const prevFrom =
       period === 'week' ? new Date(from.getTime() - 7 * DAY_MS) : new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth() - 1, 1));
@@ -227,7 +242,7 @@ export class XpService {
           xp: sql<number>`sum(${xpEvents.amount})`.mapWith(Number),
         })
         .from(xpEvents)
-        .where(and(eq(xpEvents.userId, userId), gte(xpEvents.createdAt, from), sql`${xpEvents.amount} > 0`))
+        .where(and(eq(xpEvents.userId, userId), gte(xpEvents.createdAt, from), sql`${xpEvents.amount} <> 0`))
         .groupBy(xpEvents.eventType),
       this.db
         .select({
@@ -246,7 +261,7 @@ export class XpService {
       daily.push({ date, xp: perDay.get(date) ?? 0 });
     }
     const fixed = (type: string) => {
-      const rule = (XP_RULES as Record<string, XpRule>)[type];
+      const rule = config.rules[type as XpEventType];
       return rule && rule.xp > 0 ? rule.xp : null;
     };
     return {
@@ -257,13 +272,15 @@ export class XpService {
       previousTotal,
       growthPercent: previousTotal > 0 ? Math.round(((total - previousTotal) / previousTotal) * 100) : null,
       breakdown: byType
-        .map((r) => ({ type: r.type, label: labelOf(r.type), count: r.count, xpPerUnit: fixed(r.type), xp: r.xp }))
+        .map((r) => ({ type: r.type, label: labelOf(config, r.type), count: r.count, xpPerUnit: fixed(r.type), xp: r.xp }))
         .sort((a, b) => b.xp - a.xp),
       daily,
     };
   }
 
-  async history(userId: string, rawCursor: string | undefined, limit: number) {
+  /** Ledger rows that moved XP (awards and admin reversals), newest first. `userId` filter is optional for admins. */
+  async history(userId: string | null, rawCursor: string | undefined, limit: number) {
+    const config = await getXpConfig(this.db);
     let after;
     if (rawCursor) {
       const c = decodeCursor<{ t: string; id: string }>(rawCursor);
@@ -272,11 +289,12 @@ export class XpService {
       }
       after = sql`(${xpEvents.createdAt}, ${xpEvents.id}) < (${c.t}::timestamptz, ${c.id}::uuid)`;
     }
-    const mine = and(eq(xpEvents.userId, userId), sql`${xpEvents.amount} > 0`);
+    const scope = and(userId ? eq(xpEvents.userId, userId) : undefined, sql`${xpEvents.amount} <> 0`);
     const [rows, [count]] = await Promise.all([
       this.db
         .select({
           id: xpEvents.id,
+          userId: xpEvents.userId,
           type: xpEvents.eventType,
           xp: xpEvents.amount,
           refType: xpEvents.refType,
@@ -286,24 +304,34 @@ export class XpService {
           t: sql<string>`${xpEvents.createdAt}::text`,
         })
         .from(xpEvents)
-        .where(and(mine, after))
+        .where(and(scope, after))
         .orderBy(desc(xpEvents.createdAt), desc(xpEvents.id))
         .limit(limit + 1),
-      this.db.select({ n: sql<number>`count(*)`.mapWith(Number) }).from(xpEvents).where(mine),
+      this.db.select({ n: sql<number>`count(*)`.mapWith(Number) }).from(xpEvents).where(scope),
     ]);
     const page = rows.slice(0, limit);
     const last = page.at(-1);
     return listEnvelope(
       page.map((r) => {
-        // Bonus rows carry their own label (e.g. "7-day streak", "Read one article").
-        const m = (r.metadata ?? {}) as { days?: number; taskId?: string };
+        // Bonus and reversal rows carry their own label (e.g. "7-day streak", "Daily task: Read one article").
+        const m = (r.metadata ?? {}) as { days?: number; taskId?: string; reason?: string };
         const label =
           r.type === 'streak_bonus' && m.days
             ? `${m.days}-day streak`
             : r.type === 'task_bonus' && m.taskId
-              ? `Daily task: ${DAILY_TASKS.find((t) => t.id === m.taskId)?.label ?? m.taskId}`
-              : labelOf(r.type);
-        return { id: r.id, type: r.type, label, xp: r.xp, refType: r.refType, refId: r.refId, createdAt: r.createdAt.toISOString() };
+              ? `Daily task: ${config.dailyTasks.find((t) => t.id === m.taskId)?.label ?? m.taskId}`
+              : labelOf(config, r.type);
+        return {
+          id: r.id,
+          userId: r.userId,
+          type: r.type,
+          label,
+          xp: r.xp,
+          refType: r.refType,
+          refId: r.refId,
+          reason: r.type === 'reversal' ? (m.reason ?? null) : null,
+          createdAt: r.createdAt.toISOString(),
+        };
       }),
       rows.length > limit && last ? encodeCursor({ t: last.t, id: last.id }) : null,
       count?.n ?? 0,
@@ -311,18 +339,26 @@ export class XpService {
   }
 
   async streak(userId: string, year?: number, month?: number) {
-    const now = this.now();
-    const y = year ?? now.getUTCFullYear();
-    const m = month ?? now.getUTCMonth() + 1;
-    const days = await learningDays(this.db, userId);
-    const s = streakFrom(days, utcDay(now));
+    const s = await this.streakInfo(userId);
+    const today = localDay(this.now(), s.tz);
+    const y = year ?? Number(today.slice(0, 4));
+    const m = month ?? Number(today.slice(5, 7));
     const prefix = `${y}-${String(m).padStart(2, '0')}-`;
-    return { current: s.current, longest: s.longest, year: y, month: m, activeDates: days.filter((d) => d.startsWith(prefix)).sort() };
+    return {
+      current: s.current,
+      longest: s.longest,
+      year: y,
+      month: m,
+      timezone: s.tz,
+      activeDates: s.days.filter((d) => d.startsWith(prefix)).sort(),
+    };
   }
 
   async leaderboard(userId: string, period: 'weekly' | 'monthly' | 'all_time', limit: number) {
     const now = this.now();
+    const config = await getXpConfig(this.db);
     const from = period === 'weekly' ? startOfUtcWeek(now) : period === 'monthly' ? startOfUtcMonth(now) : null;
+    // Members who opted out are left out of the ranking entirely, so nobody's rank reveals them.
     const totals = this.db
       .select({
         userId: xpEvents.userId,
@@ -331,6 +367,7 @@ export class XpService {
         reachedAt: sql`max(${xpEvents.createdAt})`.as('reached_at'),
       })
       .from(xpEvents)
+      .innerJoin(profiles, and(eq(profiles.id, xpEvents.userId), eq(profiles.showOnLeaderboard, true)))
       .where(from ? gte(xpEvents.createdAt, from) : undefined)
       .groupBy(xpEvents.userId)
       .having(sql`sum(${xpEvents.amount}) > 0`)
@@ -350,39 +387,49 @@ export class XpService {
       fullName: profiles.fullName,
       avatarUrl: profiles.avatarUrl,
     };
-    const [top, [me], xpThisWeek] = await Promise.all([
+    const [top, [me], xpThisWeek, [myProfile], myTotal] = await Promise.all([
       this.db.select(pick).from(ranked).leftJoin(profiles, eq(profiles.id, ranked.userId)).orderBy(ranked.rank).limit(limit),
       this.db.select(pick).from(ranked).leftJoin(profiles, eq(profiles.id, ranked.userId)).where(eq(ranked.userId, userId)),
       this.sumSince(userId, startOfUtcWeek(now)),
+      this.db.select({ visible: profiles.showOnLeaderboard }).from(profiles).where(eq(profiles.id, userId)),
+      from ? this.sumSince(userId, from) : xpTotal(this.db, userId),
     ]);
     const crowns = ['gold', 'silver', 'bronze'] as const;
     return {
       period,
       items: top.map((r) => {
-        const name = r.fullName ?? 'Pipeline member';
+        const isMe = r.userId === userId;
+        const full = r.fullName ?? 'Pipeline member';
         return {
           rank: r.rank,
           userId: r.userId,
-          name,
-          initials: initials(name),
+          name: isMe ? full : displayName(full, config.leaderboard.nameStyle),
+          initials: initials(full),
           avatarUrl: r.avatarUrl ?? null,
           xp: r.xp,
           crown: r.rank <= 3 ? crowns.at(r.rank - 1)! : null,
-          isMe: r.userId === userId,
+          isMe,
         };
       }),
-      me: { rank: me?.rank ?? null, xp: me?.xp ?? 0, xpThisWeek },
+      me: {
+        rank: me?.rank ?? null,
+        xp: me?.xp ?? Math.max(0, myTotal),
+        xpThisWeek,
+        hidden: myProfile ? !myProfile.visible : false,
+      },
     };
   }
 
-  rules() {
+  async rules() {
+    const config = await getXpConfig(this.db);
     return {
-      rules: (Object.entries(XP_RULES) as Array<[XpEventType, XpRule]>)
-        .filter(([type]) => type !== 'streak_bonus' && type !== 'task_bonus')
+      rules: (Object.entries(config.rules) as Array<[XpEventType, XpConfig['rules'][XpEventType]]>)
+        .filter(([type]) => type !== 'streak_bonus' && type !== 'task_bonus' && type !== 'reversal')
         .map(([type, r]) => ({ type, label: r.label, xp: r.xp, dailyCap: r.dailyCap ?? null })),
-      levels: LEVELS.map((l) => ({ number: l.number, name: l.name, minXp: l.minXp })),
-      streakBonuses: STREAK_BONUSES.map((b) => ({ days: b.days, xp: b.xp })),
-      dailyTasks: DAILY_TASKS.map((t) => ({ id: t.id, label: t.label, xp: t.xp })),
+      levels: config.levels.map((l) => ({ number: l.number, name: l.name, minXp: l.minXp })),
+      streakBonuses: config.streakBonuses.map((b) => ({ days: b.days, xp: b.xp })),
+      dailyTasks: config.dailyTasks.map((t) => ({ id: t.id, label: t.label, xp: t.xp })),
+      thresholds: { read: config.read, media: config.media, community: config.community },
     };
   }
 }

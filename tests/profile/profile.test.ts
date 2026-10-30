@@ -131,6 +131,8 @@ describe('settings and contact sharing', () => {
     expect((await get()).json()).toEqual({
       notificationsEnabled: true,
       themePreference: 'system',
+      timezone: null,
+      showOnLeaderboard: true,
       contactSharing: { enabled: false, email: false, phone: false },
     });
 
