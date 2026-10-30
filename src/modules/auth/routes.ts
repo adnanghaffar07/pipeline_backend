@@ -89,7 +89,7 @@ export const authRoutes: FastifyPluginAsyncZod<{ deps: AppDeps; limiter: Attempt
 
   app.post(
     '/logout',
-    { preHandler: app.authenticate, schema: { tags, security: [{ bearerAuth: [] }], response: { 204: z.null() } } },
+    { onRequest: app.authenticate, schema: { tags, security: [{ bearerAuth: [] }], response: { 204: z.null() } } },
     async (req, reply) => {
       await service.logout(req.user.accessToken);
       return reply.status(204).send(null);

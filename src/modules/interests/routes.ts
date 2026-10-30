@@ -18,7 +18,8 @@ const selectionBody = z.object({
 export const interestsRoutes: FastifyPluginAsyncZod<{ deps: AppDeps }> = async (app, { deps }) => {
   const service = new InterestsService(deps.db);
   const tags = ['interests'];
-  const secured = { preHandler: app.authenticate };
+  // onRequest, not preHandler: check the token before the body, so an anonymous caller gets 401, not 422.
+  const secured = { onRequest: app.authenticate };
 
   app.get('/interests/topics', { schema: { tags, response: { 200: topicsResponse } } }, async () => {
     const topics = await service.listTopics();

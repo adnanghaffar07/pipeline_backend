@@ -19,7 +19,8 @@ export const AVATAR_MAX_BYTES = 4 * 1024 * 1024;
 export const profileRoutes: FastifyPluginAsyncZod<{ deps: AppDeps }> = async (app, { deps }) => {
   const service = new ProfileService(deps.db, deps.avatars);
   const common = { tags: ['profile'], security: [{ bearerAuth: [] }] };
-  app.addHook('preHandler', app.authenticate);
+  // onRequest, not preHandler: check the token before the body, so an anonymous caller gets 401, not 422.
+  app.addHook('onRequest', app.authenticate);
   // Scoped to this plugin: no other route accepts multipart bodies.
   await app.register(multipart, { limits: { fileSize: AVATAR_MAX_BYTES, files: 1, fields: 0, parts: 2 } });
 

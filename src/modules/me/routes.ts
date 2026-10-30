@@ -10,7 +10,8 @@ const meResponse = userViewSchema.extend({ unreadNotifications: z.number().int()
 
 export const meRoutes: FastifyPluginAsyncZod<{ deps: AppDeps }> = async (app, { deps }) => {
   const common = { tags: ['me'], security: [{ bearerAuth: [] }] };
-  app.addHook('preHandler', app.authenticate);
+  // onRequest, not preHandler: check the token before the body, so an anonymous caller gets 401, not 422.
+  app.addHook('onRequest', app.authenticate);
 
   app.get('/', { schema: { ...common, response: { 200: meResponse } } }, async (req) => {
     const [profile] = await deps.db.select().from(profiles).where(eq(profiles.id, req.user.id));

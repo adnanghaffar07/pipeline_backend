@@ -263,3 +263,15 @@ describe('sniffImage', () => {
     expect(sniffImage(Buffer.from('GIF89a........'))).toBeNull();
   });
 });
+
+describe('auth before validation', () => {
+  it.each([
+    ['PATCH', '/api/v1/me/profile'],
+    ['PATCH', '/api/v1/me/settings'],
+    ['PUT', '/api/v1/me/privacy/contact-sharing'],
+    ['PUT', '/api/v1/me/interests'],
+  ] as const)('%s %s without a token is 401 even with a bad body', async (method, url) => {
+    const res = await t.app.inject({ method, url, payload: { nonsense: true } });
+    expect(res.statusCode).toBe(401);
+  });
+});
