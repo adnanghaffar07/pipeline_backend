@@ -15,6 +15,13 @@
       "when": 1793280778248,
       "tag": "0001_seed_interest_topics",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1793365152354,
+      "tag": "0002_profile_settings",
+      "breakpoints": true
     }
   ]
 }

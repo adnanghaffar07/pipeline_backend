@@ -3,6 +3,7 @@ import { SignJWT } from 'jose';
 import { sql } from 'drizzle-orm';
 import type { Db } from '../../src/db/client.js';
 import type { AuthProvider, AuthSession } from '../../src/integrations/auth-provider.js';
+import type { AvatarStorage } from '../../src/integrations/avatar-storage.js';
 import type { Notifier } from '../../src/integrations/notifier.js';
 import { AppError } from '../../src/lib/errors.js';
 import { TEST_JWT_SECRET } from './test-config.js';
@@ -159,5 +160,27 @@ export class FakeNotifier implements Notifier {
     const hit = [...this.sent].reverse().find((s) => s.destination === destination);
     if (!hit) throw new Error(`fake: nothing sent to ${destination}`);
     return hit.code;
+  }
+}
+
+export class FakeAvatarStorage implements AvatarStorage {
+  readonly objects = new Map<string, { data: Buffer; contentType: string }>();
+  private failing = false;
+
+  failNext() {
+    this.failing = true;
+  }
+
+  async upload(path: string, data: Buffer, contentType: string) {
+    if (this.failing) {
+      this.failing = false;
+      throw new AppError('STORAGE_UNAVAILABLE', 'Photo storage is temporarily unavailable');
+    }
+    this.objects.set(path, { data, contentType });
+    return { url: `https://test.supabase.co/storage/v1/object/public/avatars/${path}` };
+  }
+
+  async remove(paths: string[]) {
+    for (const p of paths) this.objects.delete(p);
   }
 }

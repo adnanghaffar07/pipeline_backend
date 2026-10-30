@@ -27,6 +27,7 @@ const STATUS = {
   INTERNAL: 500,
   EMAIL_DELIVERY_FAILED: 503,
   AUTH_PROVIDER_UNAVAILABLE: 503,
+  STORAGE_UNAVAILABLE: 503,
 } as const;
 
 export type ErrorCode = keyof typeof STATUS;

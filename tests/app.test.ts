@@ -28,6 +28,7 @@ async function makeApp(overrides: Partial<Config> = {}, logStream?: Writable): P
     auth: unused as AppDeps['auth'],
     notifier: unused as AppDeps['notifier'],
     tokens: unused as AppDeps['tokens'],
+    avatars: unused as AppDeps['avatars'],
   };
   const app = await buildApp(deps, { logStream });
   const r = app.withTypeProvider<ZodTypeProvider>();

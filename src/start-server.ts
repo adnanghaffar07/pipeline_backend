@@ -3,6 +3,7 @@ import { buildApp, type AppDeps } from './create-app.js';
 import { loadConfig, type Config } from './config.js';
 import { createDb } from './db/client.js';
 import { SupabaseAuthProvider } from './integrations/auth-provider.js';
+import { SupabaseAvatarStorage } from './integrations/avatar-storage.js';
 import { createNotifier } from './integrations/notifier.js';
 import { createTokenVerifier } from './lib/token-verifier.js';
 
@@ -18,6 +19,7 @@ const createProductionDeps: CreateDeps = async (config) => {
     auth: new SupabaseAuthProvider(config),
     notifier: createNotifier(config, console),
     tokens: createTokenVerifier(config),
+    avatars: new SupabaseAvatarStorage(config),
   };
   return { deps, close };
 };

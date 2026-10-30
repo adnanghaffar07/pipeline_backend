@@ -21,7 +21,12 @@ export const meRoutes: FastifyPluginAsyncZod<{ deps: AppDeps }> = async (app, { 
 
   // Deleting the Supabase user cascades to every row that references auth.users.
   app.delete('/', { schema: { ...common, response: { 204: z.null() } } }, async (req, reply) => {
+    const [profile] = await deps.db.select({ avatarPath: profiles.avatarPath }).from(profiles).where(eq(profiles.id, req.user.id));
     await deps.auth.deleteUser(req.user.id);
+    // Storage objects are not covered by the database cascade.
+    if (profile?.avatarPath) {
+      await deps.avatars.remove([profile.avatarPath]).catch((err: unknown) => req.log.warn({ err }, 'avatar cleanup failed'));
+    }
     return reply.status(204).send(null);
   });
 };

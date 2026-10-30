@@ -22,6 +22,7 @@ export interface Config {
   corsOrigins: string[];
   redisUrl?: string;
   docsEnabled: boolean;
+  avatarBucket: string;
   rateLimit: { globalPerMinute: number; authPerMinute: number; loginPerEmailPer15Min: number };
 }
 
@@ -86,6 +87,7 @@ const envSchema = z
     CORS_ORIGINS: z.string().default(''),
     REDIS_URL: optionalString,
     DOCS_ENABLED: bool.optional(),
+    AVATAR_BUCKET: z.string().regex(/^[a-z0-9][a-z0-9-]{1,62}$/, 'must be a lower-case bucket name').default('avatars'),
     RATE_LIMIT_GLOBAL_PER_MINUTE: int(300),
     RATE_LIMIT_AUTH_PER_MINUTE: int(10),
     RATE_LIMIT_LOGIN_PER_EMAIL_PER_15_MIN: int(10),
@@ -132,6 +134,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
       .filter(Boolean),
     redisUrl: e.REDIS_URL,
     docsEnabled: e.DOCS_ENABLED ?? e.NODE_ENV !== 'production',
+    avatarBucket: e.AVATAR_BUCKET,
     rateLimit: {
       globalPerMinute: e.RATE_LIMIT_GLOBAL_PER_MINUTE,
       authPerMinute: e.RATE_LIMIT_AUTH_PER_MINUTE,

@@ -4,6 +4,7 @@ REST API for the Pipeline mobile app (Pipeline Magazine, pipelinepub.com). Node 
 Supabase (Postgres + Auth), Resend for email.
 
 - Spec: `docs/superpowers/specs/2026-10-29-foundation-auth-design.md`
+- Mobile API reference: `docs/API_REFERENCE.md`
 - API docs (when `DOCS_ENABLED=true`): `GET /docs` (Swagger UI), `GET /docs/json` (OpenAPI 3 — the mobile team can mock from it)
 
 ## What's implemented
@@ -13,6 +14,7 @@ Supabase (Postgres + Auth), Resend for email.
 | Auth | `POST /auth/register`, `/auth/login`, `/auth/otp/verify`, `/auth/otp/resend`, `/auth/refresh`, `/auth/logout`, `/auth/password/forgot`, `/auth/password/reset`, `/auth/oauth/{google\|microsoft}` |
 | Account | `GET /me`, `DELETE /me` |
 | Interests | `GET /interests/topics`, `GET /me/interests`, `PUT /me/interests` |
+| Profile and settings | `GET/PATCH /me/profile`, `POST/DELETE /me/avatar`, `GET/PATCH /me/settings`, `PUT /me/privacy/contact-sharing` |
 | Ops | `GET /health/live`, `GET /health/ready` (unversioned) |
 
 ### How sign-in works
@@ -48,6 +50,7 @@ production it refuses `NOTIFIER=console`.
 - `OTP_SECRET` — 32+ random characters; changing it invalidates codes in flight.
 - `RESEND_API_KEY`, `EMAIL_FROM` — the `EMAIL_FROM` domain must be verified in Resend.
 - `REDIS_URL` — required when running more than one instance, so rate limits are shared.
+- `AVATAR_BUCKET` — Supabase Storage bucket for profile photos (default `avatars`). It is created as a public bucket on the first upload.
 
 ### Supabase dashboard settings
 
@@ -116,7 +119,7 @@ Not covered by automated tests; run once per environment.
 
 ## Not yet built
 
-LinkedIn sign-in, SMS delivery (the notifier has an `sms` channel slot), and everything outside sections 4 and 11
-of the requirements doc (content, library, XP, profile editing, notifications, subscriptions, ads) — those are
+LinkedIn sign-in, changing the account email, SMS delivery (the notifier has an `sms` channel slot), and everything outside sections 4 and 11
+of the requirements doc (content, library, XP, notifications, subscriptions, ads) — those are
 later sub-projects. `/me` returns `xpTotal: 0`, level 1 "Explorer", `subscription.status: "free"` and
 `unreadNotifications: 0` until those modules exist.

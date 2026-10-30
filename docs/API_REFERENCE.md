@@ -120,6 +120,13 @@
 | 3.13 | GET | `/api/v1/me/interests` | Bearer | 200 |
 | 3.14 | PUT | `/api/v1/me/interests` | Bearer | 200 |
 | 3.15 | GET | `/health/live`, `/health/ready` | — | 200 |
+| 3.16 | GET | `/api/v1/me/profile` | Bearer | 200 |
+| 3.17 | PATCH | `/api/v1/me/profile` | Bearer | 200 |
+| 3.18 | POST | `/api/v1/me/avatar` | Bearer | 200 |
+| 3.19 | DELETE | `/api/v1/me/avatar` | Bearer | 200 |
+| 3.20 | GET | `/api/v1/me/settings` | Bearer | 200 |
+| 3.21 | PATCH | `/api/v1/me/settings` | Bearer | 200 |
+| 3.22 | PUT | `/api/v1/me/privacy/contact-sharing` | Bearer | 200 |
 
 ---
 
@@ -484,6 +491,172 @@ Not under `/api/v1`. `live` → `{ "status": "ok" }`. `ready` → `{ "status": "
 
 ---
 
+## Profile and settings
+
+### 3.16 Get profile — `GET /api/v1/me/profile` 🔒
+
+All Personal Information fields, plus the profile completion banner data.
+
+**Response `200`**
+
+```json
+{
+  "id": "3f6c1a2e-8b1d-4c3a-9a51-1f0d2b7e9c44",
+  "fullName": "Adnan Ghaffar",
+  "email": "adnan@example.com",
+  "avatarUrl": null,
+  "countryName": "Pakistan",
+  "dialCode": "+92",
+  "mobile": "3001234567",
+  "location": null,
+  "company": null,
+  "jobTitle": null,
+  "linkedinUrl": null,
+  "facebookUrl": null,
+  "instagramUrl": null,
+  "websiteUrl": null,
+  "expertiseAreas": [],
+  "completion": {
+    "percent": 30,
+    "missingFields": ["location", "company", "jobTitle", "linkedinUrl", "facebookUrl", "instagramUrl", "websiteUrl"]
+  }
+}
+```
+
+`completion.percent` is based on 10 equally weighted fields: fullName, email, mobile, location, company, jobTitle, linkedinUrl, facebookUrl, instagramUrl and websiteUrl. A new account starts at 30%. `missingFields` lists what is still empty, so you can highlight those inputs.
+
+---
+
+### 3.17 Update profile — `PATCH /api/v1/me/profile` 🔒
+
+Send **only the fields you want to change**. At least one field is required. Returns the full updated profile (same shape as 3.16).
+
+**Body (all fields optional)**
+
+```json
+{
+  "fullName": "Adnan Ghaffar",
+  "countryName": "Pakistan",
+  "dialCode": "+92",
+  "mobile": "3001234567",
+  "location": "Lahore",
+  "company": "Code Automation",
+  "jobTitle": "CTO",
+  "linkedinUrl": "linkedin.com/in/adnan",
+  "facebookUrl": "https://facebook.com/adnan",
+  "instagramUrl": "instagram.com/adnan",
+  "websiteUrl": "codeautomation.dev",
+  "expertiseAreas": ["Cloud", "AI", "5G"]
+}
+```
+
+| Field | Rules |
+|---|---|
+| `fullName` | 1–100 characters. Can't be cleared. |
+| `countryName`, `location`, `company`, `jobTitle` | max 100 characters |
+| `dialCode` | `+` then 1–4 digits |
+| `mobile` | 4–20 characters. Checked against the dial code (the saved one if you send only `mobile`). Can't be cleared. |
+| `linkedinUrl` | must be a linkedin.com link |
+| `facebookUrl` | must be a facebook.com (or fb.com) link |
+| `instagramUrl` | must be an instagram.com link |
+| `websiteUrl` | any http/https website |
+| `expertiseAreas` | array of up to 20 strings, each 1–50 characters, no duplicates. Send the whole list each time. |
+| `email` | **can't be changed yet.** Sending it returns `422` with `fields.email`. |
+
+- **Clearing a field:** send `null` or `""` (works for countryName, location, company, jobTitle and the four URL fields).
+- **URLs:** `https://` is optional. `linkedin.com/in/adnan` is saved as `https://linkedin.com/in/adnan`. Show the value the server returns.
+
+**Errors:** `422 VALIDATION_FAILED`, with a reason for each field in `fields`.
+
+---
+
+### 3.18 Upload profile photo — `POST /api/v1/me/avatar` 🔒
+
+"Change Photo". Send the image as **`multipart/form-data`** with one file field (any field name, e.g. `photo`).
+
+- Allowed: **JPEG, PNG or WebP**, max **4 MB**. The server checks the actual file content, not the file name. On iOS, convert HEIC to JPEG before uploading (most image pickers can do this).
+- Resize to around 512×512 before uploading for faster uploads. The server stores the image as-is.
+
+```bash
+curl -X POST https://pipeline-backend-tan.vercel.app/api/v1/me/avatar \
+  -H "Authorization: Bearer <accessToken>" \
+  -F "photo=@me.jpg;type=image/jpeg"
+```
+
+React Native (`fetch`):
+
+```js
+const form = new FormData();
+form.append('photo', { uri: image.uri, name: 'avatar.jpg', type: 'image/jpeg' });
+await fetch(`${BASE_URL}/api/v1/me/avatar`, {
+  method: 'POST',
+  headers: { Authorization: `Bearer ${accessToken}` }, // don't set Content-Type; fetch adds the boundary
+  body: form,
+});
+```
+
+**Response `200`**
+
+```json
+{ "avatarUrl": "https://<project>.supabase.co/storage/v1/object/public/avatars/<userId>/<random>.jpg" }
+```
+
+Each upload gets a new URL and the old photo is deleted, so caching images by URL is safe. `/me` and `/me/profile` return the new `avatarUrl` straight away.
+
+**Errors:** `415 UNSUPPORTED_MEDIA_TYPE` (not an image, or not sent as multipart), `413 PAYLOAD_TOO_LARGE` (over 4 MB), `400 BAD_REQUEST` (no file attached), `429 RATE_LIMITED` (max 10 uploads per minute), `503 STORAGE_UNAVAILABLE` (retry; the old photo is kept).
+
+---
+
+### 3.19 Remove profile photo — `DELETE /api/v1/me/avatar` 🔒
+
+**Response `200`:** `{ "avatarUrl": null }`. Show initials instead.
+
+---
+
+### 3.20 Get settings — `GET /api/v1/me/settings` 🔒
+
+**Response `200`**
+
+```json
+{
+  "notificationsEnabled": true,
+  "themePreference": "system",
+  "contactSharing": { "enabled": false, "email": false, "phone": false }
+}
+```
+
+`themePreference` is `light`, `dark` or `system`. Show `system` as **Default** in the Appearance Mode card. New accounts start with notifications on, theme `system` and contact sharing off.
+
+---
+
+### 3.21 Update settings — `PATCH /api/v1/me/settings` 🔒
+
+Send one or both fields.
+
+```json
+{ "notificationsEnabled": false, "themePreference": "dark" }
+```
+
+**Response `200`:** the full settings object (same as 3.20).
+
+> Push notifications are not live yet. For now this only saves the toggle. When the notifications module ships, turning it off will also unregister the device.
+
+---
+
+### 3.22 Contact sharing — `PUT /api/v1/me/privacy/contact-sharing` 🔒
+
+Controls whether connected members can see your email and phone. All three fields are **required** on every call.
+
+```json
+{ "enabled": true, "email": true, "phone": false }
+```
+
+**Response `200`:** `{ "enabled": true, "email": true, "phone": false }`
+
+The master switch behaviour (turning `email` and `phone` on or off with it) is up to the app; the server saves exactly what you send. Later, when networking ships, the rule is: a connected member sees your email only if `enabled` **and** `email` are both true, and the same for phone.
+
+---
+
 ## 4. All error codes
 
 | HTTP | Code | Meaning |
@@ -511,6 +684,7 @@ Not under `/api/v1`. `live` → `{ "status": "ok" }`. `ready` → `{ "status": "
 | 500 | `INTERNAL` | Server error. Report it with the `x-request-id`. |
 | 503 | `EMAIL_DELIVERY_FAILED` | Email couldn't be sent. Retry shortly. |
 | 503 | `AUTH_PROVIDER_UNAVAILABLE` | Auth service temporarily down. Retry. |
+| 503 | `STORAGE_UNAVAILABLE` | Photo storage temporarily down. Retry. |
 
 ---
 
@@ -529,4 +703,4 @@ curl https://pipeline-backend-tan.vercel.app/api/v1/me \
 
 ## 6. Not built yet
 
-LinkedIn sign-in, SMS codes, profile editing/avatar upload, content/library, XP, notifications, subscriptions and ads. These endpoints will be added in later releases. Until then `/me` returns placeholder values for XP, level, subscription and unread count.
+LinkedIn sign-in, SMS codes, changing email, content/library, XP, notifications, subscriptions and ads. These endpoints will be added in later releases. Until then `/me` returns placeholder values for XP, level, subscription and unread count.

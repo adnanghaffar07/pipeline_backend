@@ -6,6 +6,7 @@ import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod
 import type { Config } from './config.js';
 import type { Db } from './db/client.js';
 import type { AuthProvider } from './integrations/auth-provider.js';
+import type { AvatarStorage } from './integrations/avatar-storage.js';
 import type { Notifier } from './integrations/notifier.js';
 import type { TokenVerifier } from './lib/token-verifier.js';
 import { errorHandler, notFoundHandler } from './lib/errors.js';
@@ -17,6 +18,7 @@ import health from './plugins/health.js';
 import { authRoutes } from './modules/auth/routes.js';
 import { meRoutes } from './modules/me/routes.js';
 import { interestsRoutes } from './modules/interests/routes.js';
+import { profileRoutes } from './modules/profile/routes.js';
 
 export interface AppDeps {
   config: Config;
@@ -24,6 +26,7 @@ export interface AppDeps {
   auth: AuthProvider;
   notifier: Notifier;
   tokens: TokenVerifier;
+  avatars: AvatarStorage;
 }
 
 export interface BuildOptions {
@@ -65,6 +68,7 @@ export async function buildApp(deps: AppDeps, opts: BuildOptions = {}): Promise<
   await app.register(authGuard, { db: deps.db, tokens: deps.tokens });
   await app.register(authRoutes, { prefix: '/api/v1/auth', deps, limiter });
   await app.register(meRoutes, { prefix: '/api/v1/me', deps });
+  await app.register(profileRoutes, { prefix: '/api/v1/me', deps });
   await app.register(interestsRoutes, { prefix: '/api/v1', deps });
 
   return app;

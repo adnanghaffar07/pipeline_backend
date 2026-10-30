@@ -4,7 +4,7 @@ import type { Config } from '../../src/config.js';
 import { createTokenVerifier } from '../../src/lib/token-verifier.js';
 import type { Db } from '../../src/db/client.js';
 import { createTestDb } from './test-db.js';
-import { FakeAuthProvider, FakeNotifier, signTestToken } from './fakes.js';
+import { FakeAuthProvider, FakeAvatarStorage, FakeNotifier, signTestToken } from './fakes.js';
 import { testConfig } from './test-config.js';
 
 export interface TestApp {
@@ -12,6 +12,7 @@ export interface TestApp {
   db: Db;
   auth: FakeAuthProvider;
   notifier: FakeNotifier;
+  avatars: FakeAvatarStorage;
   signToken: typeof signTestToken;
   close(): Promise<void>;
 }
@@ -22,13 +23,15 @@ export async function createTestApp(overrides: Partial<Config> = {}): Promise<Te
   const config = testConfig(overrides);
   const auth = new FakeAuthProvider(testDb.db);
   const notifier = new FakeNotifier();
-  const app = await buildApp({ config, db: testDb.db, auth, notifier, tokens: createTokenVerifier(config) });
+  const avatars = new FakeAvatarStorage();
+  const app = await buildApp({ config, db: testDb.db, auth, notifier, avatars, tokens: createTokenVerifier(config) });
   await app.ready();
   return {
     app,
     db: testDb.db,
     auth,
     notifier,
+    avatars,
     signToken: signTestToken,
     async close() {
       await app.close();

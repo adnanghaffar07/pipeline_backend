@@ -21,6 +21,7 @@ export const authUsers = pgSchema('auth').table('users', { id: uuid('id').primar
 export type ProfileStatus = 'pending' | 'active';
 export type OtpPurpose = 'signup' | 'login' | 'password_reset';
 export type OtpChannel = 'email' | 'sms';
+export type ThemePreference = 'light' | 'dark' | 'system';
 
 export const profiles = pgTable('profiles', {
   id: uuid('id')
@@ -33,6 +34,21 @@ export const profiles = pgTable('profiles', {
   mobile: text('mobile'),
   phoneE164: text('phone_e164'),
   avatarUrl: text('avatar_url'),
+  /** Storage object path of the current avatar, so it can be removed when replaced. */
+  avatarPath: text('avatar_path'),
+  location: text('location'),
+  company: text('company'),
+  jobTitle: text('job_title'),
+  linkedinUrl: text('linkedin_url'),
+  facebookUrl: text('facebook_url'),
+  instagramUrl: text('instagram_url'),
+  websiteUrl: text('website_url'),
+  expertiseAreas: text('expertise_areas').array().notNull().default(sql`'{}'::text[]`),
+  notificationsEnabled: boolean('notifications_enabled').notNull().default(true),
+  themePreference: text('theme_preference').$type<ThemePreference>().notNull().default('system'),
+  shareContactEnabled: boolean('share_contact_enabled').notNull().default(false),
+  shareEmail: boolean('share_email').notNull().default(false),
+  sharePhone: boolean('share_phone').notNull().default(false),
   status: text('status').$type<ProfileStatus>().notNull(),
   termsAcceptedAt: timestamptz('terms_accepted_at'),
   termsVersion: text('terms_version'),
