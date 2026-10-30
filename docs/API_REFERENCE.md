@@ -12,7 +12,7 @@
 |---|---|
 | Content type | Send `Content-Type: application/json` on every request that has a body. Max body size 100 KB. |
 | Auth | Protected endpoints need `Authorization: Bearer <accessToken>`. |
-| Access token life | 15 minutes (`expiresIn: 900` seconds). Refresh with `POST /api/v1/auth/refresh`. |
+| Access token life | 1 hour (`expiresIn: 3600` seconds). Use the `expiresIn` value from each response instead of hard-coding it. Refresh with `POST /api/v1/auth/refresh`. |
 | Refresh tokens | **Rotate on every refresh.** Always save the newest `refreshToken` and throw away the old one — an old one stops working. |
 | Emails | Trimmed and lower-cased by the server. |
 | Request id | Every response has an `x-request-id` header. Include it in bug reports. |
@@ -127,6 +127,13 @@
 | 3.20 | GET | `/api/v1/me/settings` | Bearer | 200 |
 | 3.21 | PATCH | `/api/v1/me/settings` | Bearer | 200 |
 | 3.22 | PUT | `/api/v1/me/privacy/contact-sharing` | Bearer | 200 |
+| 3.23 | GET | `/api/v1/articles/{articleId}/comments` | Bearer | 200 |
+| 3.24 | POST | `/api/v1/articles/{articleId}/comments` | Bearer | 201 |
+| 3.25 | GET | `/api/v1/comments/{commentId}/replies` | Bearer | 200 |
+| 3.26 | POST | `/api/v1/comments/{commentId}/replies` | Bearer | 201 |
+| 3.27 | DELETE | `/api/v1/comments/{commentId}` | Bearer | 204 |
+| 3.28 | POST | `/api/v1/comments/{commentId}/like` | Bearer | 200 |
+| 3.29 | DELETE | `/api/v1/comments/{commentId}/like` | Bearer | 200 |
 
 ---
 
@@ -205,7 +212,7 @@ Creates the account and emails a 4-digit code.
   "otpRequired": false,
   "accessToken": "eyJhbGciOi...",
   "refreshToken": "v1.MrX9...",
-  "expiresIn": 900,
+  "expiresIn": 3600,
   "isNewUser": false,
   "user": { "...": "see User object" }
 }
@@ -241,7 +248,7 @@ Used after **register** and **login** only. Password-reset codes go to 3.8.
 {
   "accessToken": "eyJhbGciOi...",
   "refreshToken": "v1.MrX9...",
-  "expiresIn": 900,
+  "expiresIn": 3600,
   "isNewUser": true,
   "user": {
     "id": "3f6c1a2e-8b1d-4c3a-9a51-1f0d2b7e9c44",
@@ -301,7 +308,7 @@ Works for sign-up, login and password-reset challenges.
 {
   "accessToken": "eyJhbGciOi...",
   "refreshToken": "v1.NewToken...",
-  "expiresIn": 900
+  "expiresIn": 3600
 }
 ```
 
@@ -317,7 +324,7 @@ Save **both** new tokens.
 **Body:** none.
 **Response:** `204 No Content`.
 
-Signs out this device only. Clear stored tokens on the app side too. The access token keeps working for up to 15 minutes, which is normal for JWTs.
+Signs out this device only. Clear stored tokens on the app side too. The access token keeps working until it expires (up to 1 hour), which is normal for JWTs.
 
 ---
 
@@ -657,6 +664,87 @@ The master switch behaviour (turning `email` and `phone` on or off with it) is u
 
 ---
 
+## Comments
+
+Comments sit on articles. `articleId` is the article's id from the content API: letters, digits, `-` and `_`, up to 100 characters. Replies go one level deep.
+
+### The comment object
+
+```json
+{
+  "id": "7c2f0d1e-3b4a-4c5d-8e9f-0a1b2c3d4e5f",
+  "articleId": "article-123",
+  "parentId": null,
+  "text": "Great read on 5G slicing",
+  "isDeleted": false,
+  "isMine": true,
+  "author": { "id": "04bb34bb-ce33-4326-8a32-153d3b4bd772", "fullName": "Ayesha Munir", "avatarUrl": null },
+  "likeCount": 2,
+  "likedByMe": false,
+  "replyCount": 1,
+  "createdAt": "2026-10-30T14:45:12.345Z"
+}
+```
+
+- `isMine` → show the Delete button.
+- `parentId` is `null` for a top-level comment, or the top-level comment's id for a reply.
+- `isDeleted: true` means the author deleted it but it still has replies. `text` and `author` are then `null`; show "Comment deleted" and keep the replies under it.
+- `createdAt` is ISO 8601. Format "Just now" or "5 min ago" in the app.
+
+### 3.23 List comments — `GET /api/v1/articles/{articleId}/comments` 🔒
+
+Top-level comments, **newest first**. Query: `limit` (1–50, default 20) and `cursor`.
+
+```json
+{ "items": [ { "...": "comment object" } ], "nextCursor": "eyJ0Ijoi...", "total": 14 }
+```
+
+To load more, call again with `?cursor=<nextCursor>`. `nextCursor: null` means there is nothing more. `total` is the number of top-level comments.
+
+### 3.24 Post a comment — `POST /api/v1/articles/{articleId}/comments` 🔒
+
+```json
+{ "text": "Great read on 5G slicing" }
+```
+
+`text`: 1–500 characters after trimming. Disable Post while the trimmed text is empty.
+
+**Response `201`**
+
+```json
+{ "comment": { "...": "comment object" }, "xpAwarded": 0 }
+```
+
+`xpAwarded` stays `0` until XP is built. Later it will carry the XP earned, for a "+3 XP" toast.
+
+**Errors:** `422 VALIDATION_FAILED` (empty or over 500 characters), `409 DUPLICATE_COMMENT` (same text posted in the last 5 minutes), `429 RATE_LIMITED` (more than 10 comments a minute or 200 a day; includes `retryAfterSec`).
+
+### 3.25 List replies — `GET /api/v1/comments/{commentId}/replies` 🔒
+
+Replies under one comment, **oldest first**, so they read like a conversation. Same `limit` and `cursor` paging and list shape as 3.23. Use `replyCount` on the parent for the "View 3 replies" label.
+
+### 3.26 Reply — `POST /api/v1/comments/{commentId}/replies` 🔒
+
+Same body, response and errors as 3.24. Replying to a reply adds it to the same thread: its `parentId` is the top-level comment. A deleted, hidden or unknown comment returns `404 COMMENT_NOT_FOUND`.
+
+### 3.27 Delete a comment — `DELETE /api/v1/comments/{commentId}` 🔒
+
+Returns `204`. Only the author can delete their comment; anyone else gets `403 FORBIDDEN`. A comment with replies stays as a "deleted" placeholder until its replies are gone.
+
+### 3.28 Like / 3.29 Unlike — `POST` / `DELETE /api/v1/comments/{commentId}/like` 🔒
+
+No body. Both are safe to repeat, and both return the new state:
+
+```json
+{ "likeCount": 3, "likedByMe": true }
+```
+
+`404 COMMENT_NOT_FOUND` if the comment was deleted.
+
+> The server doesn't check yet that `articleId` exists. That check comes when the content API is connected, so only use ids from the content API.
+
+---
+
 ## 4. All error codes
 
 | HTTP | Code | Meaning |
@@ -669,10 +757,13 @@ The master switch behaviour (turning `email` and `phone` on or off with it) is u
 | 401 | `INVALID_CREDENTIALS` | Wrong email or password |
 | 401 | `INVALID_REFRESH_TOKEN` | Refresh token expired/used. Sign in again. |
 | 403 | `ACCOUNT_NOT_VERIFIED` | Sign-up not finished |
+| 403 | `FORBIDDEN` | Not allowed (e.g. deleting someone else's comment) |
 | 404 | `NOT_FOUND` | Route doesn't exist |
 | 404 | `CHALLENGE_NOT_FOUND` | Unknown challenge id |
+| 404 | `COMMENT_NOT_FOUND` | Comment deleted, hidden or unknown |
 | 409 | `EMAIL_TAKEN` | Email already registered |
 | 409 | `OTP_ALREADY_USED` | Code already used |
+| 409 | `DUPLICATE_COMMENT` | Same comment posted in the last 5 minutes |
 | 410 | `OTP_EXPIRED` | Code expired |
 | 413 | `PAYLOAD_TOO_LARGE` | Body over 100 KB |
 | 415 | `UNSUPPORTED_MEDIA_TYPE` | Missing/wrong `Content-Type` |
@@ -703,4 +794,4 @@ curl https://pipeline-backend-tan.vercel.app/api/v1/me \
 
 ## 6. Not built yet
 
-LinkedIn sign-in, SMS codes, changing email, content/library, XP, notifications, subscriptions and ads. These endpoints will be added in later releases. Until then `/me` returns placeholder values for XP, level, subscription and unread count.
+LinkedIn sign-in, SMS codes, changing email, content, library, XP, notifications, subscriptions and ads. These endpoints will be added in later releases. Until then `/me` returns placeholder values for XP, level, subscription and unread count.

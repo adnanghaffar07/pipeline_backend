@@ -22,6 +22,13 @@
       "when": 1793365152354,
       "tag": "0002_profile_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1793371428615,
+      "tag": "0003_comments",
+      "breakpoints": true
     }
   ]
 }

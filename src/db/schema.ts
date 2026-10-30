@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import {
+  type AnyPgColumn,
   boolean,
   index,
   inet,
@@ -99,4 +100,49 @@ export const userInterests = pgTable(
       .references(() => interestTopics.id),
   },
   (t) => [primaryKey({ columns: [t.userId, t.topicId] })],
+);
+
+export type CommentTargetType = 'article';
+export type CommentStatus = 'visible' | 'hidden';
+
+/**
+ * Comments on content that lives in the client's API, so the target is a (type, id) pair, not a foreign key.
+ * One level of replies: a reply's parent is always a top-level comment.
+ */
+export const comments = pgTable(
+  'comments',
+  {
+    id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+    targetType: text('target_type').$type<CommentTargetType>().notNull(),
+    targetId: text('target_id').notNull(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => authUsers.id, { onDelete: 'cascade' }),
+    parentId: uuid('parent_id').references((): AnyPgColumn => comments.id, { onDelete: 'cascade' }),
+    text: text('text').notNull(),
+    /** `hidden` = removed by a moderator. */
+    status: text('status').$type<CommentStatus>().notNull().default('visible'),
+    createdAt: timestamptz('created_at').notNull().defaultNow(),
+    /** Set when the author deletes it; kept while it still has replies so the thread stays readable. */
+    deletedAt: timestamptz('deleted_at'),
+  },
+  (t) => [
+    index('comments_target_created_idx').on(t.targetType, t.targetId, t.createdAt, t.id),
+    index('comments_parent_created_idx').on(t.parentId, t.createdAt, t.id),
+    index('comments_user_created_idx').on(t.userId, t.createdAt),
+  ],
+);
+
+export const commentLikes = pgTable(
+  'comment_likes',
+  {
+    commentId: uuid('comment_id')
+      .notNull()
+      .references(() => comments.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => authUsers.id, { onDelete: 'cascade' }),
+    createdAt: timestamptz('created_at').notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.commentId, t.userId] })],
 );

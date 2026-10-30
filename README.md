@@ -15,12 +15,13 @@ Supabase (Postgres + Auth), Resend for email.
 | Account | `GET /me`, `DELETE /me` |
 | Interests | `GET /interests/topics`, `GET /me/interests`, `PUT /me/interests` |
 | Profile and settings | `GET/PATCH /me/profile`, `POST/DELETE /me/avatar`, `GET/PATCH /me/settings`, `PUT /me/privacy/contact-sharing` |
+| Comments | `GET/POST /articles/{articleId}/comments`, `GET/POST /comments/{id}/replies`, `DELETE /comments/{id}`, `POST/DELETE /comments/{id}/like` |
 | Ops | `GET /health/live`, `GET /health/ready` (unversioned) |
 
 ### How sign-in works
 
 1. `register` (or `login`) checks the details and emails a **4-digit code**; it returns a `challengeId`.
-2. `otp/verify` with `challengeId` + `code` returns `accessToken` (15 min), `refreshToken`, `isNewUser` and the user.
+2. `otp/verify` with `challengeId` + `code` returns `accessToken` (1 hour), `refreshToken`, `isNewUser` and the user.
 3. Send `Authorization: Bearer <accessToken>` on protected calls; use `auth/refresh` when it expires. Refresh tokens rotate — always store the newest one.
 
 Codes expire after 5 minutes, allow 5 wrong attempts, can be resent after 27 seconds (max 5 times). Per address
@@ -55,7 +56,7 @@ production it refuses `NOTIFIER=console`.
 ### Supabase dashboard settings
 
 - Authentication → Sign In / Providers → Email: enabled, **Confirm email on**.
-- Authentication → Sessions / JWT: access token expiry **900** seconds; refresh token rotation and reuse detection on (default).
+- Authentication → Sessions / JWT: access token expiry **3600** seconds (1 hour; the mobile docs assume this); refresh token rotation and reuse detection on (default).
 - Google / Azure providers: enable and add the mobile app's client IDs when OAuth sign-in is wanted.
 - Authentication → Rate Limits: every auth call comes from this server's IP, so Supabase's per-IP limits are
   shared by all users. Each login uses two limited calls (password check + session). Raise the sign-in and
@@ -119,7 +120,7 @@ Not covered by automated tests; run once per environment.
 
 ## Not yet built
 
-LinkedIn sign-in, changing the account email, SMS delivery (the notifier has an `sms` channel slot), and everything outside sections 4 and 11
-of the requirements doc (content, library, XP, notifications, subscriptions, ads) — those are
+LinkedIn sign-in, changing the account email, SMS delivery (the notifier has an `sms` channel slot), and everything else in
+the requirements doc (content, library, XP, notifications, subscriptions, ads) — those are
 later sub-projects. `/me` returns `xpTotal: 0`, level 1 "Explorer", `subscription.status: "free"` and
 `unreadNotifications: 0` until those modules exist.
