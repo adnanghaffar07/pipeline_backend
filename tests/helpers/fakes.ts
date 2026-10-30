@@ -4,6 +4,7 @@ import { sql } from 'drizzle-orm';
 import type { Db } from '../../src/db/client.js';
 import type { AuthProvider, AuthSession } from '../../src/integrations/auth-provider.js';
 import type { AvatarStorage } from '../../src/integrations/avatar-storage.js';
+import type { PushMessage, PushResult, PushSender } from '../../src/integrations/push.js';
 import type { Notifier } from '../../src/integrations/notifier.js';
 import { AppError } from '../../src/lib/errors.js';
 import { TEST_JWT_SECRET } from './test-config.js';
@@ -182,5 +183,22 @@ export class FakeAvatarStorage implements AvatarStorage {
 
   async remove(paths: string[]) {
     for (const p of paths) this.objects.delete(p);
+  }
+}
+
+export class FakePush implements PushSender {
+  enabled = true;
+  readonly sent: Array<{ tokens: string[]; message: PushMessage }> = [];
+  /** Tokens to report back as invalid (UNREGISTERED). */
+  readonly dead = new Set<string>();
+
+  async send(tokens: string[], message: PushMessage): Promise<PushResult> {
+    this.sent.push({ tokens, message });
+    const invalidTokens = tokens.filter((t) => this.dead.has(t));
+    return { sent: tokens.length - invalidTokens.length, failed: invalidTokens.length, invalidTokens };
+  }
+
+  tokensFor(title: RegExp) {
+    return this.sent.filter((s) => title.test(s.message.title)).flatMap((s) => s.tokens);
   }
 }

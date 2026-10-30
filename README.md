@@ -18,7 +18,8 @@ Supabase (Postgres + Auth), Resend for email.
 | Comments | `GET/POST /articles/{articleId}/comments`, `GET/POST /comments/{id}/replies`, `DELETE /comments/{id}`, `POST/DELETE /comments/{id}/like` |
 | Tech XP | `POST /events`, `GET /me/progress`, `/me/xp`, `/me/history`, `/me/streak`, `/me/tasks`, `/badges`, `/me/badges/next`, `/leaderboard`, `/xp/rules` (defaults in `src/modules/xp/config.ts`, overridable at runtime) |
 | Networking | `GET /people`, `GET /people/{id}`, `GET/POST /connections`, accept/decline/remove, block/unblock, `GET /me/blocks`, report |
-| Admin | `GET/PUT /admin/xp/config`, `GET /admin/xp/events`, `POST /admin/xp/reversals`, `GET/PATCH /admin/reports` — needs `profiles.role = 'admin'` (set it in the SQL editor) |
+| Notifications | `GET /notifications`, `POST /notifications/{id}/read`, `POST /notifications/read-all`, `POST /devices`, `DELETE /devices/{token}` (push via Firebase when configured) |
+| Admin | `GET/PUT /admin/xp/config`, `GET /admin/xp/events`, `POST /admin/xp/reversals`, `GET/PATCH /admin/reports`, `POST/GET/DELETE /admin/notifications` — needs `profiles.role = 'admin'` (set it in the SQL editor) |
 | Ops | `GET /health/live`, `GET /health/ready` (unversioned) |
 
 ### How sign-in works
@@ -54,6 +55,7 @@ production it refuses `NOTIFIER=console`.
 - `OTP_SECRET` — 32+ random characters; changing it invalidates codes in flight.
 - `RESEND_API_KEY`, `EMAIL_FROM` — the `EMAIL_FROM` domain must be verified in Resend.
 - `REDIS_URL` — required when running more than one instance, so rate limits are shared.
+- `FIREBASE_SERVICE_ACCOUNT` — optional. The Firebase service-account JSON (Project settings → Service accounts → Generate new private key), on one line or base64-encoded. Without it push is off and notifications only appear in the in-app feed. For iOS also upload the APNs key in Firebase → Cloud Messaging.
 - `AVATAR_BUCKET` — Supabase Storage bucket for profile photos (default `avatars`). It is created as a public bucket on the first upload.
 
 ### Supabase dashboard settings
@@ -100,7 +102,8 @@ Project → Settings → Environment Variables (Production): every variable from
 
 - `NODE_ENV=production`
 - `TRUST_PROXY=1` — Vercel's edge sets `X-Forwarded-For` to the real client IP.
-- `DATABASE_URL` — prefer Supabase's **transaction pooler** (port 6543) for serverless; URL-encode special characters in the password (`#` → `%23`).
+- `DATABASE_URL` — **use Supabase's transaction pooler (port 6543)**, not the session pooler (5432). The session pooler allows only as many clients as its pool size (15), and every warm function instance keeps its own connections, so it runs out ("max clients reached"). The app logs a warning at startup when it sees 5432 on Vercel. URL-encode special characters in the password (`#` → `%23`).
+- `DB_POOL_MAX` — optional; connections per instance. Defaults to 3 on Vercel and 10 elsewhere.
 - `REDIS_URL` (e.g. Upstash) — function instances don't share memory, so rate limits are only per-instance without it.
 
 Run migrations from your machine (`npm run db:migrate:dev`), not from Vercel. After changing env vars, redeploy.
@@ -124,5 +127,5 @@ Not covered by automated tests; run once per environment.
 ## Not yet built
 
 LinkedIn sign-in, changing the account email, SMS delivery (the notifier has an `sms` channel slot), and everything else in
-the requirements doc (content, library, notifications, subscriptions, ads) — those are
-later sub-projects. `/me` returns `subscription.status: "free"` and `unreadNotifications: 0` until those modules exist.
+the requirements doc (content, library, subscriptions, ads, invites, webinars) — those are
+later sub-projects. `/me` returns `subscription.status: "free"` until subscriptions exist.

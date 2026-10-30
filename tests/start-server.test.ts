@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { startServer } from '../src/start-server.js';
 import { createTokenVerifier } from '../src/lib/token-verifier.js';
 import { createTestDb } from './helpers/test-db.js';
-import { FakeAuthProvider, FakeAvatarStorage, FakeNotifier } from './helpers/fakes.js';
+import { FakeAuthProvider, FakeAvatarStorage, FakeNotifier, FakePush } from './helpers/fakes.js';
 
 const env = {
   NODE_ENV: 'test',
@@ -33,7 +33,7 @@ describe('startServer', () => {
       createDeps: async (config) => {
         const t = await createTestDb();
         return {
-          deps: { config, db: t.db, auth: new FakeAuthProvider(t.db), notifier: new FakeNotifier(), avatars: new FakeAvatarStorage(), tokens: createTokenVerifier(config) },
+          deps: { config, db: t.db, auth: new FakeAuthProvider(t.db), notifier: new FakeNotifier(), avatars: new FakeAvatarStorage(), push: new FakePush(), tokens: createTokenVerifier(config) },
           close: async () => {
             dbClosed = true;
             await t.close();

@@ -6,6 +6,7 @@ import type { AttemptLimiter } from '../../lib/attempt-limiter.js';
 import { AppError } from '../../lib/errors.js';
 import { decodeCursor, encodeCursor } from '../../lib/pagination.js';
 import type { memberProfile, personCard } from './schemas.js';
+import type { NotificationsService } from '../notifications/service.js';
 
 type PersonCard = z.infer<typeof personCard>;
 type Status = 'connected' | 'received' | 'sent';
@@ -52,7 +53,25 @@ export class NetworkingService {
   constructor(
     private readonly db: Db,
     private readonly limiter: AttemptLimiter,
+    private readonly notifications: NotificationsService,
   ) {}
+
+  /** "Ayesha Munir wants to connect" / "... accepted your connection request", sent to `to` about `about`. */
+  private async alert(to: string, about: string, type: 'connection_request' | 'connection_accepted') {
+    const [p] = await this.db
+      .select({ fullName: profiles.fullName, jobTitle: profiles.jobTitle, company: profiles.company })
+      .from(profiles)
+      .where(eq(profiles.id, about));
+    if (!p) return;
+    const role = [p.jobTitle, p.company].filter(Boolean).join(' at ') || null;
+    await this.notifications.notifyUser(to, {
+      type,
+      title: type === 'connection_request' ? `${p.fullName} wants to connect` : `${p.fullName} accepted your connection request`,
+      description: role,
+      target: { type: 'person', id: about },
+      actorId: about,
+    });
+  }
 
   private cardFields(me: string) {
     return {
@@ -263,7 +282,6 @@ export class NetworkingService {
     return c;
   }
 
-  // Notifications for "new request" and "request accepted" are sent here once the notifications module lands.
   async send(me: string, toUserId: string): Promise<{ created: boolean; person: PersonCard }> {
     if (toUserId === me) {
       throw new AppError('VALIDATION_FAILED', 'Request validation failed', { fields: { toUserId: 'You cannot connect with yourself' } });
@@ -275,6 +293,8 @@ export class NetworkingService {
     if (existing) {
       // They already asked me: sending back counts as accepting.
       await this.db.update(connections).set({ status: 'accepted', respondedAt: new Date() }).where(eq(connections.id, existing.id));
+      await this.notifications.retract(me, 'connection_request', toUserId);
+      await this.alert(toUserId, me, 'connection_accepted');
       return { created: false, person: await this.card(me, toUserId) };
     }
     for (const [name, limit] of Object.entries(LIMITS).filter(([n]) => n.startsWith('requests'))) {
@@ -285,7 +305,12 @@ export class NetworkingService {
       }
     }
     // The pair index makes a simultaneous request from the other side fail here instead of creating a second row.
-    await this.db.insert(connections).values({ requesterId: me, addresseeId: toUserId }).onConflictDoNothing();
+    const inserted = await this.db
+      .insert(connections)
+      .values({ requesterId: me, addresseeId: toUserId })
+      .onConflictDoNothing()
+      .returning({ id: connections.id });
+    if (inserted.length > 0) await this.alert(toUserId, me, 'connection_request');
     return { created: true, person: await this.card(me, toUserId) };
   }
 
@@ -298,12 +323,16 @@ export class NetworkingService {
   async accept(me: string, connectionId: string) {
     const c = await this.pendingFor(me, connectionId);
     await this.db.update(connections).set({ status: 'accepted', respondedAt: new Date() }).where(eq(connections.id, c.id));
+    // The request alert has done its job; the requester hears it was accepted.
+    await this.notifications.retract(me, 'connection_request', c.requesterId);
+    await this.alert(c.requesterId, me, 'connection_accepted');
     return this.card(me, c.requesterId);
   }
 
   async decline(me: string, connectionId: string) {
     const c = await this.pendingFor(me, connectionId);
     await this.db.delete(connections).where(eq(connections.id, c.id));
+    await this.notifications.retract(me, 'connection_request', c.requesterId);
   }
 
   /** Cancel a request I sent, decline one I received, or remove a connection. */
@@ -311,6 +340,8 @@ export class NetworkingService {
     const [c] = await this.db.select().from(connections).where(eq(connections.id, connectionId));
     if (!c || (c.requesterId !== me && c.addresseeId !== me)) throw connNotFound();
     await this.db.delete(connections).where(eq(connections.id, c.id));
+    // A cancelled request shouldn't linger in the other person's feed.
+    if (c.status === 'pending') await this.notifications.retract(c.addresseeId, 'connection_request', c.requesterId);
   }
 
   // ---- Block and report -----------------------------------------------------------------------------------------
@@ -332,6 +363,8 @@ export class NetworkingService {
           ),
         );
     });
+    await this.notifications.retract(personId, 'connection_request', me);
+    await this.notifications.retract(me, 'connection_request', personId);
   }
 
   async unblock(me: string, personId: string) {

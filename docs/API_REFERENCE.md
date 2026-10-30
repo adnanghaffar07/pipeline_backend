@@ -67,7 +67,7 @@
 }
 ```
 
-`subscription.status` is one of `free`, `active`, `grace`, `expired`, `canceled`. `xpTotal` and `level` are live (see Tech XP). `subscription` is always `free` until subscriptions are built.
+`subscription.status` is one of `free`, `active`, `grace`, `expired`, `canceled`. `xpTotal`, `level` and `unreadNotifications` are live. `subscription` is always `free` until subscriptions are built.
 
 ---
 
@@ -160,6 +160,13 @@
 | 3.53 | POST | `/api/v1/people/{personId}/report` | Bearer | 201 |
 | 3.54 | GET | `/api/v1/admin/reports` | Admin | 200 |
 | 3.55 | PATCH | `/api/v1/admin/reports/{reportId}` | Admin | 204 |
+| 3.56 | GET | `/api/v1/notifications` | Bearer | 200 |
+| 3.57 | POST | `/api/v1/notifications/{notificationId}/read` | Bearer | 200 |
+| 3.58 | POST | `/api/v1/notifications/read-all` | Bearer | 200 |
+| 3.59 | POST | `/api/v1/devices` | Bearer | 200 |
+| 3.60 | DELETE | `/api/v1/devices/{token}` | Bearer | 204 |
+| 3.61 | POST / GET | `/api/v1/admin/notifications` | Admin | 201 / 200 |
+| 3.62 | DELETE | `/api/v1/admin/notifications/{notificationId}` | Admin | 204 |
 
 ---
 
@@ -678,7 +685,7 @@ Send any of the fields.
 
 **Response `200`:** the full settings object (same as 3.20).
 
-> Push notifications are not live yet. For now this only saves the toggle. When the notifications module ships, turning it off will also unregister the device.
+> Turning `notificationsEnabled` off stops pushes straight away (the in-app feed still fills). The app may also call `DELETE /devices/{token}`.
 
 ---
 
@@ -1085,7 +1092,102 @@ Blocking removes any connection or request, and hides the two members from each 
 
 Lists reports with the reporter, the reported member (name and email) and `reportsAgainstMember`. `PATCH` with `{ "status": "reviewed" | "dismissed" }` → `204`.
 
-> New-request and accepted notifications arrive with the Notifications module.
+> A new request notifies the other member ("Alice wants to connect"), and accepting notifies the requester. Cancelling, declining or blocking removes the pending request alert.
+
+---
+
+## Notifications
+
+The bell feed, read state and push. `GET /api/v1/me` returns the live `unreadNotifications` count for the bell dot.
+
+### 3.56 Feed — `GET /api/v1/notifications?filter=all&limit=20&cursor=` 🔒
+
+`filter` matches the chips: `all`, `latest_issue`, `news` (news and breaking news) or `research`. Newest first.
+
+```json
+{
+  "items": [{
+    "id": "5b0e…",
+    "type": "connection_request",
+    "label": "Networking",
+    "title": "Alice Sender wants to connect",
+    "description": "Engineer at Acme",
+    "coverUrl": null,
+    "xpValue": null,
+    "isPremium": false,
+    "target": { "type": "person", "id": "04bb34bb-…" },
+    "actor": { "id": "04bb34bb-…", "fullName": "Alice Sender", "avatarUrl": null },
+    "read": false,
+    "createdAt": "2026-10-31T09:12:00.000Z"
+  }],
+  "nextCursor": null,
+  "total": 6,
+  "unreadCount": 2
+}
+```
+
+| `type` | Default `label` | Tapping opens `target` |
+|---|---|---|
+| `latest_issue` | Latest issue | `issue` |
+| `breaking_news`, `news` | Breaking news, News | `news` / `article` |
+| `research` | Research Center | `research` |
+| `video`, `webinar`, `podcast` | Video, Webinar, Podcast | that item |
+| `connection_request`, `connection_accepted` | Networking | `person` → `GET /people/{id}` |
+| `system` | Pipeline | `url` or nothing |
+
+Show `actor.avatarUrl` (or initials) for networking items and `coverUrl` for content. Show the XP chip when `xpValue` is set and the Premium pill when `isPremium` is true. Opening a notification earns no XP by itself; the content's own events do.
+
+### 3.57 Mark one read — `POST /api/v1/notifications/{notificationId}/read` · 3.58 Mark all read — `POST /api/v1/notifications/read-all` 🔒
+
+Both return `{ "unreadCount": 0 }` so the bell can update without another call. Call 3.57 when a notification is tapped. `404 NOTIFICATION_NOT_FOUND` if it isn't one of yours.
+
+### 3.59 Register for push — `POST /api/v1/devices` 🔒
+
+```json
+{ "token": "<FCM registration token>", "platform": "ios", "appVersion": "1.0.0" }
+```
+
+Returns `{ "registered": true, "pushEnabled": true }`. `pushEnabled: false` means the server has no Firebase key yet; the in-app feed still works.
+
+- Get the token from the Firebase Messaging SDK (`@react-native-firebase/messaging`: `getToken()`). Send it after sign-in, on every app start, and whenever `onTokenRefresh` fires.
+- A token belongs to whoever registered it last, so sharing a phone between accounts works.
+- Pushes go out only while the user's **Notifications** toggle is on (`PATCH /me/settings`, `notificationsEnabled`).
+
+**Push payload:** `notification.title` and `body` (plus `image` when there's a cover), and `data: { notificationId, type, targetType, targetId }`. On tap, open the target and call 3.57 with `notificationId`.
+
+### 3.60 Unregister — `DELETE /api/v1/devices/{token}` 🔒
+
+URL-encode the token. Call it on sign-out. Returns `204`. The server also drops tokens Firebase reports as dead.
+
+### 3.61 / 3.62 Admin broadcasts — `POST` / `GET /api/v1/admin/notifications` · `DELETE /api/v1/admin/notifications/{id}`
+
+Send content alerts ("Issue 49 is out", breaking news) to everyone or to members with chosen interests:
+
+```json
+{
+  "type": "latest_issue",
+  "title": "Issue 49 is out",
+  "description": "Network slicing in practice",
+  "coverUrl": "https://cdn.example.com/issue-49.jpg",
+  "xpValue": 10,
+  "isPremium": false,
+  "target": { "type": "issue", "id": "issue-49" },
+  "audienceTopicIds": [1, 11],
+  "push": true
+}
+```
+
+- `type` is a content type or `system`; networking types are server-only.
+- Leave out `audienceTopicIds` to reach everyone.
+- Returns `201 { "id", "pushEnabled", "push": { "sent", "failed", "devices" } }`. Up to 2,000 devices are pushed per broadcast.
+- Broadcasts stay in feeds for 90 days. `GET` lists recent broadcasts with how many people read each; `DELETE` withdraws one from every feed.
+
+### Turning on push (server)
+
+1. In the [Firebase console](https://console.firebase.google.com) create (or open) the project, and add the iOS and Android apps.
+2. iOS only: Project settings → Cloud Messaging → upload the **APNs key** (.p8) from the Apple Developer account.
+3. Project settings → Service accounts → **Generate new private key**.
+4. In Vercel → Settings → Environment Variables add `FIREBASE_SERVICE_ACCOUNT` = the whole JSON file on one line (or base64-encoded), then redeploy.
 
 ---
 
@@ -1108,6 +1210,7 @@ Lists reports with the reporter, the reported member (name and email) and `repor
 | 404 | `PERSON_NOT_FOUND` | Member unknown, inactive or blocked |
 | 404 | `CONNECTION_NOT_FOUND` | Request or connection gone, or not yours |
 | 404 | `REPORT_NOT_FOUND` | Report unknown (admin) |
+| 404 | `NOTIFICATION_NOT_FOUND` | Notification unknown or not yours |
 | 409 | `EMAIL_TAKEN` | Email already registered |
 | 409 | `OTP_ALREADY_USED` | Code already used |
 | 409 | `DUPLICATE_COMMENT` | Same comment posted in the last 5 minutes |

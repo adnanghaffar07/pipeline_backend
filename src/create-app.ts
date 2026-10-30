@@ -7,6 +7,9 @@ import type { Config } from './config.js';
 import type { Db } from './db/client.js';
 import type { AuthProvider } from './integrations/auth-provider.js';
 import type { AvatarStorage } from './integrations/avatar-storage.js';
+import type { PushSender } from './integrations/push.js';
+import { NotificationsService } from './modules/notifications/service.js';
+import { notificationsRoutes } from './modules/notifications/routes.js';
 import type { Notifier } from './integrations/notifier.js';
 import type { TokenVerifier } from './lib/token-verifier.js';
 import { errorHandler, notFoundHandler } from './lib/errors.js';
@@ -30,6 +33,7 @@ export interface AppDeps {
   notifier: Notifier;
   tokens: TokenVerifier;
   avatars: AvatarStorage;
+  push: PushSender;
 }
 
 export interface BuildOptions {
@@ -70,11 +74,13 @@ export async function buildApp(deps: AppDeps, opts: BuildOptions = {}): Promise<
   await app.register(health, { db: deps.db });
   await app.register(authGuard, { db: deps.db, tokens: deps.tokens });
   await app.register(authRoutes, { prefix: '/api/v1/auth', deps, limiter });
-  await app.register(meRoutes, { prefix: '/api/v1/me', deps });
+  const notifications = new NotificationsService(deps.db, deps.push, app.log);
+  await app.register(meRoutes, { prefix: '/api/v1/me', deps, notifications });
   await app.register(profileRoutes, { prefix: '/api/v1/me', deps });
   await app.register(commentsRoutes, { prefix: '/api/v1', deps, limiter });
   await app.register(xpRoutes, { prefix: '/api/v1', deps, limiter });
-  await app.register(networkingRoutes, { prefix: '/api/v1', deps, limiter });
+  await app.register(networkingRoutes, { prefix: '/api/v1', deps, limiter, notifications });
+  await app.register(notificationsRoutes, { prefix: '/api/v1', deps, service: notifications });
   await app.register(interestsRoutes, { prefix: '/api/v1', deps });
 
   return app;

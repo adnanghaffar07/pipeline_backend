@@ -21,10 +21,14 @@ import {
   sendBody,
 } from './schemas.js';
 import { NetworkingService } from './service.js';
+import type { NotificationsService } from '../notifications/service.js';
 
 /** Mounted at /api/v1. */
-export const networkingRoutes: FastifyPluginAsyncZod<{ deps: AppDeps; limiter: AttemptLimiter }> = async (app, { deps, limiter }) => {
-  const service = new NetworkingService(deps.db, limiter);
+export const networkingRoutes: FastifyPluginAsyncZod<{ deps: AppDeps; limiter: AttemptLimiter; notifications: NotificationsService }> = async (
+  app,
+  { deps, limiter, notifications },
+) => {
+  const service = new NetworkingService(deps.db, limiter, notifications);
   const sec = { tags: ['networking'], security: [{ bearerAuth: [] }] };
   const secured = { onRequest: app.authenticate };
 

@@ -1,9 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import { buildApp, type AppDeps } from './create-app.js';
 import { loadConfig, type Config } from './config.js';
-import { createDb } from './db/client.js';
+import { createDb, isSupabaseSessionPooler } from './db/client.js';
 import { SupabaseAuthProvider } from './integrations/auth-provider.js';
 import { SupabaseAvatarStorage } from './integrations/avatar-storage.js';
+import { createPush } from './integrations/push.js';
 import { createNotifier } from './integrations/notifier.js';
 import { createTokenVerifier } from './lib/token-verifier.js';
 
@@ -12,7 +13,13 @@ const SHUTDOWN_TIMEOUT_MS = 10_000;
 type CreateDeps = (config: Config) => Promise<{ deps: AppDeps; close(): Promise<void> }>;
 
 const createProductionDeps: CreateDeps = async (config) => {
-  const { db, close } = createDb(config.databaseUrl);
+  const { db, close } = createDb(config.databaseUrl, { max: config.dbPoolMax });
+  if (config.serverless && isSupabaseSessionPooler(config.databaseUrl)) {
+    // Never log the URL itself: it contains the database password.
+    console.warn(
+      'DATABASE_URL uses the Supabase session pooler (port 5432). Serverless instances can exhaust it; use the transaction pooler (port 6543).',
+    );
+  }
   const deps: AppDeps = {
     config,
     db,
@@ -20,6 +27,7 @@ const createProductionDeps: CreateDeps = async (config) => {
     notifier: createNotifier(config, console),
     tokens: createTokenVerifier(config),
     avatars: new SupabaseAvatarStorage(config),
+    push: createPush(config, { warn: (o, m) => console.warn(m, o) }),
   };
   return { deps, close };
 };

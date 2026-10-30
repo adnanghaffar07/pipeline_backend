@@ -21,6 +21,12 @@ export interface Config {
   termsVersion: string;
   corsOrigins: string[];
   redisUrl?: string;
+  /** Database connections per process: 3 on Vercel (one pool per warm instance), 10 elsewhere. */
+  dbPoolMax: number;
+  /** True when running as a Vercel function. */
+  serverless: boolean;
+  /** Firebase service account for push (FCM HTTP v1). Absent = push is off; feeds still work. */
+  firebase?: { projectId: string; clientEmail: string; privateKey: string };
   docsEnabled: boolean;
   avatarBucket: string;
   rateLimit: { globalPerMinute: number; authPerMinute: number; loginPerEmailPer15Min: number };
@@ -86,6 +92,24 @@ const envSchema = z
     TERMS_VERSION: z.string().min(1),
     CORS_ORIGINS: z.string().default(''),
     REDIS_URL: optionalString,
+    DB_POOL_MAX: z.coerce.number().int().min(1).max(100).optional(),
+    VERCEL: optionalString,
+    // The service-account JSON from Firebase, pasted as-is or base64-encoded.
+    FIREBASE_SERVICE_ACCOUNT: optionalString.transform((v, ctx) => {
+      if (!v) return undefined;
+      const text = v.startsWith('{') ? v : Buffer.from(v, 'base64').toString('utf8');
+      try {
+        const j = JSON.parse(text) as Record<string, unknown>;
+        if (typeof j.project_id === 'string' && typeof j.client_email === 'string' && typeof j.private_key === 'string') {
+          return { projectId: j.project_id, clientEmail: j.client_email, privateKey: j.private_key.replace(/\\n/g, '\n') };
+        }
+      } catch {
+        // fall through
+      }
+      // Never echo the value: it contains a private key.
+      ctx.addIssue({ code: 'custom', message: 'must be the Firebase service-account JSON (project_id, client_email, private_key)' });
+      return z.NEVER;
+    }),
     DOCS_ENABLED: bool.optional(),
     AVATAR_BUCKET: z.string().regex(/^[a-z0-9][a-z0-9-]{1,62}$/, 'must be a lower-case bucket name').default('avatars'),
     RATE_LIMIT_GLOBAL_PER_MINUTE: int(300),
@@ -133,6 +157,9 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
       .map((o) => o.trim())
       .filter(Boolean),
     redisUrl: e.REDIS_URL,
+    serverless: Boolean(e.VERCEL),
+    dbPoolMax: e.DB_POOL_MAX ?? (e.VERCEL ? 3 : 10),
+    firebase: e.FIREBASE_SERVICE_ACCOUNT,
     docsEnabled: e.DOCS_ENABLED ?? e.NODE_ENV !== 'production',
     avatarBucket: e.AVATAR_BUCKET,
     rateLimit: {

@@ -78,3 +78,20 @@ describe('loadConfig', () => {
     ).toBe(false);
   });
 });
+
+describe('database pool', () => {
+  it('keeps the pool small on Vercel and honours DB_POOL_MAX', async () => {
+    expect(loadConfig(base).dbPoolMax).toBe(10);
+    expect(loadConfig({ ...base, VERCEL: '1' })).toMatchObject({ dbPoolMax: 3, serverless: true });
+    expect(loadConfig({ ...base, VERCEL: '1', DB_POOL_MAX: '5' }).dbPoolMax).toBe(5);
+    expect(() => loadConfig({ ...base, DB_POOL_MAX: '0' })).toThrow(/DB_POOL_MAX/);
+  });
+
+  it('recognises the Supabase session pooler', async () => {
+    const { isSupabaseSessionPooler } = await import('../src/db/client.js');
+    expect(isSupabaseSessionPooler('postgresql://u:p@aws-0-eu-west-1.pooler.supabase.com:5432/postgres')).toBe(true);
+    expect(isSupabaseSessionPooler('postgresql://u:p@aws-0-eu-west-1.pooler.supabase.com:6543/postgres')).toBe(false);
+    expect(isSupabaseSessionPooler('postgresql://u:p@db.abc.supabase.co:5432/postgres')).toBe(false);
+    expect(isSupabaseSessionPooler('not a url')).toBe(false);
+  });
+});

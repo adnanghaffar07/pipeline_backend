@@ -58,6 +58,8 @@ export const profiles = pgTable('profiles', {
   /** IANA time zone (e.g. Asia/Karachi) for streak days and daily tasks; null = UTC. */
   timezone: text('timezone'),
   showOnLeaderboard: boolean('show_on_leaderboard').notNull().default(true),
+  /** "Mark all as read": every notification created before this counts as read. */
+  notificationsReadAt: timestamptz('notifications_read_at'),
   /** `admin` unlocks /admin endpoints. Set by hand in the database. */
   role: text('role').$type<ProfileRole>().notNull().default('member'),
   status: text('status').$type<ProfileStatus>().notNull(),
@@ -270,4 +272,78 @@ export const memberReports = pgTable(
     reviewedAt: timestamptz('reviewed_at'),
   },
   (t) => [index('member_reports_status_created_idx').on(t.status, t.createdAt)],
+);
+
+export type NotificationType =
+  | 'latest_issue'
+  | 'breaking_news'
+  | 'news'
+  | 'research'
+  | 'video'
+  | 'webinar'
+  | 'podcast'
+  | 'connection_request'
+  | 'connection_accepted'
+  | 'system';
+
+/**
+ * A personal notification (user_id set) or a broadcast (user_id null) shown to everyone, or only to members with
+ * one of `audience_topic_ids` among their interests.
+ */
+export const notifications = pgTable(
+  'notifications',
+  {
+    id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+    userId: uuid('user_id').references(() => authUsers.id, { onDelete: 'cascade' }),
+    audienceTopicIds: smallint('audience_topic_ids').array(),
+    type: text('type').$type<NotificationType>().notNull(),
+    label: text('label').notNull(),
+    title: text('title').notNull(),
+    description: text('description'),
+    coverUrl: text('cover_url'),
+    xpValue: integer('xp_value'),
+    isPremium: boolean('is_premium').notNull().default(false),
+    targetType: text('target_type'),
+    targetId: text('target_id'),
+    /** The member the notification is about (e.g. who sent a connection request). */
+    actorId: uuid('actor_id').references(() => authUsers.id, { onDelete: 'cascade' }),
+    createdBy: uuid('created_by').references(() => authUsers.id, { onDelete: 'set null' }),
+    createdAt: timestamptz('created_at').notNull().defaultNow(),
+  },
+  (t) => [
+    index('notifications_user_created_idx').on(t.userId, t.createdAt),
+    index('notifications_broadcast_created_idx').on(t.createdAt).where(sql`${t.userId} is null`),
+  ],
+);
+
+export const notificationReads = pgTable(
+  'notification_reads',
+  {
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => authUsers.id, { onDelete: 'cascade' }),
+    notificationId: uuid('notification_id')
+      .notNull()
+      .references(() => notifications.id, { onDelete: 'cascade' }),
+    readAt: timestamptz('read_at').notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.notificationId] })],
+);
+
+export type DevicePlatform = 'ios' | 'android' | 'web';
+
+/** Push tokens (FCM registration tokens). A token belongs to whoever registered it last. */
+export const devices = pgTable(
+  'devices',
+  {
+    token: text('token').primaryKey(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => authUsers.id, { onDelete: 'cascade' }),
+    platform: text('platform').$type<DevicePlatform>().notNull(),
+    appVersion: text('app_version'),
+    createdAt: timestamptz('created_at').notNull().defaultNow(),
+    lastSeenAt: timestamptz('last_seen_at').notNull().defaultNow(),
+  },
+  (t) => [index('devices_user_idx').on(t.userId)],
 );
