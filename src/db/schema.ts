@@ -41,6 +41,8 @@ export const profiles = pgTable('profiles', {
   /** Storage object path of the current avatar, so it can be removed when replaced. */
   avatarPath: text('avatar_path'),
   location: text('location'),
+  /** "About" on the member profile. */
+  bio: text('bio'),
   company: text('company'),
   jobTitle: text('job_title'),
   linkedinUrl: text('linkedin_url'),
@@ -204,3 +206,68 @@ export const appSettings = pgTable('app_settings', {
     .defaultNow()
     .$onUpdate(() => new Date()),
 });
+
+export type ConnectionStatus = 'pending' | 'accepted';
+
+/**
+ * One row per pair of members, whichever of them asked first. `pending` = requester is waiting for the addressee;
+ * a declined or cancelled request is deleted, so the pair can start over.
+ */
+export const connections = pgTable(
+  'connections',
+  {
+    id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+    requesterId: uuid('requester_id')
+      .notNull()
+      .references(() => authUsers.id, { onDelete: 'cascade' }),
+    addresseeId: uuid('addressee_id')
+      .notNull()
+      .references(() => authUsers.id, { onDelete: 'cascade' }),
+    status: text('status').$type<ConnectionStatus>().notNull().default('pending'),
+    createdAt: timestamptz('created_at').notNull().defaultNow(),
+    respondedAt: timestamptz('responded_at'),
+  },
+  (t) => [
+    // At most one row per pair, in either direction.
+    uniqueIndex('connections_pair_uidx').on(
+      sql`least(${t.requesterId}, ${t.addresseeId})`,
+      sql`greatest(${t.requesterId}, ${t.addresseeId})`,
+    ),
+    index('connections_requester_idx').on(t.requesterId, t.status),
+    index('connections_addressee_idx').on(t.addresseeId, t.status),
+  ],
+);
+
+export const blocks = pgTable(
+  'blocks',
+  {
+    blockerId: uuid('blocker_id')
+      .notNull()
+      .references(() => authUsers.id, { onDelete: 'cascade' }),
+    blockedId: uuid('blocked_id')
+      .notNull()
+      .references(() => authUsers.id, { onDelete: 'cascade' }),
+    createdAt: timestamptz('created_at').notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.blockerId, t.blockedId] }), index('blocks_blocked_idx').on(t.blockedId)],
+);
+
+export type ReportReason = 'spam' | 'harassment' | 'fake_profile' | 'inappropriate' | 'other';
+export type ReportStatus = 'open' | 'reviewed' | 'dismissed';
+
+export const memberReports = pgTable(
+  'member_reports',
+  {
+    id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+    reporterId: uuid('reporter_id').references(() => authUsers.id, { onDelete: 'set null' }),
+    reportedId: uuid('reported_id')
+      .notNull()
+      .references(() => authUsers.id, { onDelete: 'cascade' }),
+    reason: text('reason').$type<ReportReason>().notNull(),
+    details: text('details'),
+    status: text('status').$type<ReportStatus>().notNull().default('open'),
+    createdAt: timestamptz('created_at').notNull().defaultNow(),
+    reviewedAt: timestamptz('reviewed_at'),
+  },
+  (t) => [index('member_reports_status_created_idx').on(t.status, t.createdAt)],
+);

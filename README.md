@@ -17,7 +17,8 @@ Supabase (Postgres + Auth), Resend for email.
 | Profile and settings | `GET/PATCH /me/profile`, `POST/DELETE /me/avatar`, `GET/PATCH /me/settings`, `PUT /me/privacy/contact-sharing` |
 | Comments | `GET/POST /articles/{articleId}/comments`, `GET/POST /comments/{id}/replies`, `DELETE /comments/{id}`, `POST/DELETE /comments/{id}/like` |
 | Tech XP | `POST /events`, `GET /me/progress`, `/me/xp`, `/me/history`, `/me/streak`, `/me/tasks`, `/badges`, `/me/badges/next`, `/leaderboard`, `/xp/rules` (defaults in `src/modules/xp/config.ts`, overridable at runtime) |
-| Admin | `GET/PUT /admin/xp/config`, `GET /admin/xp/events`, `POST /admin/xp/reversals` — needs `profiles.role = 'admin'` (set it in the SQL editor) |
+| Networking | `GET /people`, `GET /people/{id}`, `GET/POST /connections`, accept/decline/remove, block/unblock, `GET /me/blocks`, report |
+| Admin | `GET/PUT /admin/xp/config`, `GET /admin/xp/events`, `POST /admin/xp/reversals`, `GET/PATCH /admin/reports` — needs `profiles.role = 'admin'` (set it in the SQL editor) |
 | Ops | `GET /health/live`, `GET /health/ready` (unversioned) |
 
 ### How sign-in works
@@ -123,5 +124,5 @@ Not covered by automated tests; run once per environment.
 ## Not yet built
 
 LinkedIn sign-in, changing the account email, SMS delivery (the notifier has an `sms` channel slot), and everything else in
-the requirements doc (content, library, networking, notifications, subscriptions, ads) — those are
+the requirements doc (content, library, notifications, subscriptions, ads) — those are
 later sub-projects. `/me` returns `subscription.status: "free"` and `unreadNotifications: 0` until those modules exist.

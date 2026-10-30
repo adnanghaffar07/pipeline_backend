@@ -148,6 +148,18 @@
 | 3.41 | PUT | `/api/v1/admin/xp/config` | Admin | 200 |
 | 3.42 | GET | `/api/v1/admin/xp/events` | Admin | 200 |
 | 3.43 | POST | `/api/v1/admin/xp/reversals` | Admin | 201 |
+| 3.44 | GET | `/api/v1/people` | Bearer | 200 |
+| 3.45 | GET | `/api/v1/people/{personId}` | Bearer | 200 |
+| 3.46 | GET | `/api/v1/connections` | Bearer | 200 |
+| 3.47 | POST | `/api/v1/connections` | Bearer | 201 / 200 |
+| 3.48 | POST | `/api/v1/connections/{connectionId}/accept` | Bearer | 200 |
+| 3.49 | POST | `/api/v1/connections/{connectionId}/decline` | Bearer | 204 |
+| 3.50 | DELETE | `/api/v1/connections/{connectionId}` | Bearer | 204 |
+| 3.51 | POST / DELETE | `/api/v1/people/{personId}/block` | Bearer | 204 |
+| 3.52 | GET | `/api/v1/me/blocks` | Bearer | 200 |
+| 3.53 | POST | `/api/v1/people/{personId}/report` | Bearer | 201 |
+| 3.54 | GET | `/api/v1/admin/reports` | Admin | 200 |
+| 3.55 | PATCH | `/api/v1/admin/reports/{reportId}` | Admin | 204 |
 
 ---
 
@@ -581,6 +593,7 @@ Send **only the fields you want to change**. At least one field is required. Ret
 | `facebookUrl` | must be a facebook.com (or fb.com) link |
 | `instagramUrl` | must be an instagram.com link |
 | `websiteUrl` | any http/https website |
+| `bio` | "About" on the member profile, up to 500 characters. Not part of the completion percentage. |
 | `expertiseAreas` | array of up to 20 strings, each 1–50 characters, no duplicates. Send the whole list each time. |
 | `email` | **can't be changed yet.** Sending it returns `422` with `fields.email`. |
 
@@ -974,6 +987,108 @@ Adds a negative entry that cancels the award (the original stays for the audit t
 
 ---
 
+## Networking
+
+Members find each other, connect, and (when allowed) see each other's contact details. Every networking screen uses the **person card**:
+
+```json
+{
+  "id": "04bb34bb-ce33-4326-8a32-153d3b4bd772",
+  "fullName": "Ayesha Munir",
+  "initials": "AM",
+  "avatarUrl": null,
+  "jobTitle": "Developer",
+  "company": "Code Automation",
+  "location": "Lahore",
+  "connectionState": "none",
+  "connectionId": null,
+  "mutualConnections": 2,
+  "sharedInterests": 3
+}
+```
+
+| `connectionState` | Button | `connectionId` |
+|---|---|---|
+| `none` | Connect → `POST /connections` | `null` |
+| `sent` | Pending / Cancel → `DELETE /connections/{connectionId}` | set |
+| `received` | Accept / Decline → `/connections/{connectionId}/accept` or `/decline` | set |
+| `connected` | Message / Remove → `DELETE /connections/{connectionId}` | set |
+| `self` | Edit profile | `null` |
+
+### 3.44 Discover — `GET /api/v1/people?q=&limit=20&cursor=` 🔒
+
+Everyone you're not connected to yet (pending requests included, with their state). People with the most shared interests come first, then by name. `q` searches name, job title and company; every word must match the start of a word ("zain qur" finds "Zainab Qureshi"). Returns `{ items: [person card], nextCursor, total }`.
+
+### 3.45 Member profile — `GET /api/v1/people/{personId}` 🔒
+
+The person card plus:
+
+```json
+{
+  "bio": "Telecom strategist",
+  "expertiseAreas": ["5G", "Cloud"],
+  "interests": [{ "id": 1, "name": "Network Transformation" }],
+  "contact": { "email": "ayesha@example.com", "phone": null, "locked": false }
+}
+```
+
+**Contact rule (enforced by the server):** an email or phone is returned only when you are **connected** AND the member turned on contact sharing (3.22) AND that field's switch is on. Otherwise it is `null`. `locked: true` means neither is shared, so show the "not shared yet" card. Your own profile (`connectionState: "self"`) always shows your details. A blocked or unknown member returns `404 PERSON_NOT_FOUND`.
+
+### 3.46 My connections — `GET /api/v1/connections?status=connected|received|sent&q=&limit=&cursor=` 🔒
+
+```json
+{
+  "items": [{ "...": "person card" }],
+  "nextCursor": null,
+  "total": 4,
+  "counts": { "connected": 4, "received": 1, "sent": 2 }
+}
+```
+
+`counts` drives the tab badges: show a red dot when `received > 0`, and the number on Sent. Newest first; `q` works as in Discover.
+
+### 3.47 Send a request — `POST /api/v1/connections` 🔒
+
+```json
+{ "toUserId": "04bb34bb-ce33-4326-8a32-153d3b4bd772" }
+```
+
+Returns the person card with the new state:
+
+- `201` + `sent`: request created.
+- `200` + `sent`: you had already asked (safe to repeat).
+- `200` + `connected`: they had already asked you, so this accepts it.
+
+Errors: `409 ALREADY_CONNECTED`, `404 PERSON_NOT_FOUND`, `422` (yourself), `429 RATE_LIMITED` (30 requests a day, or asking the same person more than 3 times in 30 days).
+
+### 3.48 Accept · 3.49 Decline · 3.50 Cancel / remove 🔒
+
+- `POST /connections/{connectionId}/accept`: only the person who received the request. Returns the other person's card (`connected`).
+- `POST /connections/{connectionId}/decline` → `204`. The requester isn't told; their request just disappears.
+- `DELETE /connections/{connectionId}` → `204`. Cancels a request you sent, or removes a connection (either side).
+
+`404 CONNECTION_NOT_FOUND` if it no longer exists or isn't yours.
+
+### 3.51 Block / unblock — `POST` / `DELETE /api/v1/people/{personId}/block` 🔒 · 3.52 `GET /api/v1/me/blocks`
+
+Blocking removes any connection or request, and hides the two members from each other everywhere (Discover, profiles and requests). `GET /me/blocks` returns `{ items: [{ id, fullName, initials, avatarUrl, blockedAt }] }` for a "Blocked members" settings screen.
+
+### 3.53 Report — `POST /api/v1/people/{personId}/report` 🔒
+
+```json
+{ "reason": "spam", "details": "Sends promo links", "block": true }
+```
+
+`reason`: `spam`, `harassment`, `fake_profile`, `inappropriate` or `other`. `block: true` also blocks them. Returns `201 { "reportId": "…", "blocked": true }`. Limit: 10 reports a day.
+
+### 3.54 / 3.55 Admin: reports — `GET /api/v1/admin/reports?status=open` · `PATCH /api/v1/admin/reports/{reportId}`
+
+Lists reports with the reporter, the reported member (name and email) and `reportsAgainstMember`. `PATCH` with `{ "status": "reviewed" | "dismissed" }` → `204`.
+
+> New-request and accepted notifications arrive with the Notifications module.
+
+---
+
 ## 4. All error codes
 
 | HTTP | Code | Meaning |
@@ -990,10 +1105,14 @@ Adds a negative entry that cancels the award (the original stays for the audit t
 | 404 | `NOT_FOUND` | Route doesn't exist |
 | 404 | `CHALLENGE_NOT_FOUND` | Unknown challenge id |
 | 404 | `COMMENT_NOT_FOUND` | Comment deleted, hidden or unknown |
+| 404 | `PERSON_NOT_FOUND` | Member unknown, inactive or blocked |
+| 404 | `CONNECTION_NOT_FOUND` | Request or connection gone, or not yours |
+| 404 | `REPORT_NOT_FOUND` | Report unknown (admin) |
 | 409 | `EMAIL_TAKEN` | Email already registered |
 | 409 | `OTP_ALREADY_USED` | Code already used |
 | 409 | `DUPLICATE_COMMENT` | Same comment posted in the last 5 minutes |
 | 409 | `ALREADY_REVERSED` | That XP award was already reversed (admin) |
+| 409 | `ALREADY_CONNECTED` | You're already connected |
 | 410 | `OTP_EXPIRED` | Code expired |
 | 413 | `PAYLOAD_TOO_LARGE` | Body over 100 KB |
 | 415 | `UNSUPPORTED_MEDIA_TYPE` | Missing/wrong `Content-Type` |

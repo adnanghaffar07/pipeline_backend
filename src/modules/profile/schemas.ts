@@ -56,6 +56,7 @@ export const profilePatchBody = z
     facebookUrl: url('Facebook', ['facebook.com', 'fb.com']),
     instagramUrl: url('Instagram', ['instagram.com']),
     websiteUrl: url('website'),
+    bio: clearable(z.string().trim().min(1).max(500, 'About can be at most 500 characters')),
     expertiseAreas,
   })
   .partial()
@@ -78,6 +79,8 @@ export const profileResponse = z.object({
   facebookUrl: z.string().nullable(),
   instagramUrl: z.string().nullable(),
   websiteUrl: z.string().nullable(),
+  /** "About" text shown on the member profile. Not part of the completion percentage. */
+  bio: z.string().nullable(),
   expertiseAreas: z.array(z.string()),
   completion: z.object({
     percent: z.number().int(),

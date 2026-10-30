@@ -21,6 +21,7 @@ import { interestsRoutes } from './modules/interests/routes.js';
 import { profileRoutes } from './modules/profile/routes.js';
 import { commentsRoutes } from './modules/comments/routes.js';
 import { xpRoutes } from './modules/xp/routes.js';
+import { networkingRoutes } from './modules/networking/routes.js';
 
 export interface AppDeps {
   config: Config;
@@ -73,6 +74,7 @@ export async function buildApp(deps: AppDeps, opts: BuildOptions = {}): Promise<
   await app.register(profileRoutes, { prefix: '/api/v1/me', deps });
   await app.register(commentsRoutes, { prefix: '/api/v1', deps, limiter });
   await app.register(xpRoutes, { prefix: '/api/v1', deps, limiter });
+  await app.register(networkingRoutes, { prefix: '/api/v1', deps, limiter });
   await app.register(interestsRoutes, { prefix: '/api/v1', deps });
 
   return app;

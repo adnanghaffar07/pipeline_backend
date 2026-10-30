@@ -47,6 +47,7 @@ function toProfileView(p: Profile): z.infer<typeof profileResponse> {
     facebookUrl: p.facebookUrl,
     instagramUrl: p.instagramUrl,
     websiteUrl: p.websiteUrl,
+    bio: p.bio,
     expertiseAreas: p.expertiseAreas,
     completion: completion(p),
   };

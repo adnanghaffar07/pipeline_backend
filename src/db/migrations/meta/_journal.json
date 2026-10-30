@@ -43,6 +43,13 @@
       "when": 1793374611367,
       "tag": "0005_xp_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1793388124016,
+      "tag": "0006_networking",
+      "breakpoints": true
     }
   ]
 }
